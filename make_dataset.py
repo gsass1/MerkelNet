@@ -7,8 +7,10 @@ from moviepy.editor import VideoFileClip
 import librosa
 import cv2
 from threading import Lock, Thread
-
+import torch
 import time
+
+print('CUDA is available:', torch.cuda.is_available())
 
 T = 50
 SR = 16000
@@ -19,6 +21,8 @@ FPS = 25
 F_MAX = 8000
 W, H = 48, 48
 BATCH_SIZE = 32
+
+WORKERS = 2
 
 DATA_DIR = 'data'
 os.makedirs(DATA_DIR, exist_ok=True)
@@ -75,9 +79,9 @@ def convert_clip_part_to_training_example(detector, clip, S, start_frame):
             exit(1)
 
     frame_np = np.array(frames).astype(np.uint8)
-    print('Detecting faces...')
+    #print('Detecting faces...')
     detections = detector.batched_detect(frame_np)
-    print('Done Detecting faces...')
+    #print('Done Detecting faces...')
 
     # sanity check
     if len(detections) != T:
@@ -88,7 +92,10 @@ def convert_clip_part_to_training_example(detector, clip, S, start_frame):
     for i in range(T):
         face = detections[i]
         if len(face) == 0:
-            print('No face detected here...')
+            #print('No face detected here, skipping')
+            return [], []
+        if len(face) > 1:
+            #print('Detected more than one face, skipping')
             return [], []
         bb = face[0].astype(int)
         cropped_frame = frames[i][bb[1]:bb[3], bb[0]:bb[2]]
@@ -174,6 +181,8 @@ class PreprocessWorker(Thread):
                         X.append(cropped_frames)
                         Y.append(spectrograms)
                         #print(np.array(X).shape, np.array(Y).shape)
+                    #else:
+                        #print(clip_date, 'from', clip_start, 'to', clip_end, 'did not work out!!')
                 except Exception as e:
                     print('Exception:', e)
                     print('Skipping this clip part')
@@ -192,13 +201,12 @@ class PreprocessWorker(Thread):
 counter = ThreadSafeCounter()
 
 workers = []
-num_workers = 2
-print('Starting', num_workers, 'workers')
-timings_per_worker = len(timings) // num_workers
-for i in range(num_workers):
+print('Starting', WORKERS, 'workers')
+timings_per_worker = len(timings) // WORKERS
+for i in range(WORKERS):
     start = i * timings_per_worker
     end = start + timings_per_worker
-    if i == num_workers - 1:
+    if i == WORKERS - 1:
         end = len(timings)
     worker = PreprocessWorker(i, timings[start:end], counter)
     worker.start()
