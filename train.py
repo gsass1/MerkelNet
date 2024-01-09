@@ -4,6 +4,8 @@ import torch.nn as nn
 import torch.optim as optim
 import numpy as np
 import os.path
+from torchinfo import summary
+from argparse import ArgumentParser
 
 T = 50
 SR = 16000
@@ -13,24 +15,35 @@ HOP_LENGTH = 512
 FPS = 25
 F_MAX = 8000
 W, H = 48, 48
-BATCH_SIZE = 32
+DATASET_BATCH_SIZE = 32
 
 DATA_DIR = 'data'
 
+parser = ArgumentParser(
+                    prog='train',
+                    description='Train the network')
+
+parser.add_argument('data_dir', default=DATA_DIR)
+args = parser.parse_args()
+
+if not os.path.isdir(args.data_dir):
+    print('Data directory does not exist')
+    exit(1)
+
 class MerkelDataset(Dataset):
-    def __init__(self):
+    def __init__(self, data_dir):
         self.filepaths = []
-        for f in os.listdir(DATA_DIR):
+        for f in os.listdir(data_dir):
             if f.endswith('.npz'):
-                self.filepaths.append(os.path.join(DATA_DIR, f))
+                self.filepaths.append(os.path.join(data_dir, f))
 
     def __len__(self):
-        return len(self.filepaths) * BATCH_SIZE
+        return len(self.filepaths) * DATASET_BATCH_SIZE 
 
 
     def __getitem__(self, idx):
-        file_idx = idx // 32
-        data_idx = idx % 32
+        file_idx = idx // DATASET_BATCH_SIZE 
+        data_idx = idx % DATASET_BATCH_SIZE 
 
         data = np.load(self.filepaths[file_idx])
         X = torch.from_numpy(data['X'][data_idx])
@@ -60,10 +73,12 @@ class ConvBlock(nn.Module):
 
         x = self.conv(x)
         x = self.batch_norm(x)
-        x = self.activation(x)
 
-        # if self.residual:
-        #     x += pre_x
+        if self.residual:
+            x += pre_x
+
+        x = nn.functional.relu(x)
+
         return x
 
 def calculate_padding(kernel_size, stride):
@@ -146,27 +161,25 @@ class MerkelNet(nn.Module):
     def __init__(self):
         super(MerkelNet, self).__init__()
         self.encoder = LipEncoder()
-        self.decoder = LipDecoder(24, 128, 2, 128)
+        self.decoder = LipDecoder(24, 64, 2, 128)
 
     def forward(self, x):
         x = self.encoder(x)
         x = self.decoder(x)
         return x
 
-# x = torch.randn(1, 3, T, 48, 48)
-# y = model(x)
-# print(y.shape)
-
 # Training requirements
 model = MerkelNet()
-dataset = MerkelDataset()
-data_loader = DataLoader(dataset, batch_size=16, shuffle=True)
+print(summary(model, input_size=(1, 3, T, 48, 48)))
+
+dataset = MerkelDataset(args.data_dir)
+data_loader = DataLoader(dataset, batch_size=32, shuffle=True)
 criterion = nn.MSELoss()
 optimizer = optim.Adam(model.parameters(), lr=0.001)
 
 # Training loop
 model.train()
-for epoch in range(5):
+for epoch in range(50):
     for batch_idx, (X, Y) in enumerate(data_loader):
         optimizer.zero_grad()
         output = model(X)
