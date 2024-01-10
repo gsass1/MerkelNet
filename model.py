@@ -1,9 +1,11 @@
+import torch
 import torch.nn as nn
+from einops import reduce
 from hparams import HParams
 
-class ConvBlock(nn.Module):
+class ConvNorm(nn.Module):
     def __init__(self, in_channels, out_channels, kernel_size, stride, padding, residual=False):
-        super(ConvBlock, self).__init__()
+        super(ConvNorm, self).__init__()
         self.residual = residual
         self.conv = nn.Conv3d(in_channels, out_channels, kernel_size=kernel_size, stride=stride, padding=padding)
         self.batch_norm = nn.BatchNorm3d(out_channels)
@@ -35,46 +37,26 @@ class Encoder(nn.Module):
     def __init__(self, hparams):
         super(Encoder, self).__init__()
         self.hparams = hparams
-        self.blocks = []
-        NUM_BLOCKS = 4
-        c = 3
-        for i in range(NUM_BLOCKS):
-            kernel_size = (5 if i == 0 else 3)
-            stride = (1, 2, 2)  # Stride
-            padding = calculate_padding(kernel_size, stride)
-            block = ConvBlock((c if i == 0 else c//2), c, kernel_size, stride, padding)
-            self.blocks.append(block)
+        self.convolutions = nn.Sequential(
+            ConvNorm(3, 6, 5, (1,2,2), (2,1,1)),
+            #ConvNorm(6, 6, 3, (1,1,1), (1,1,1), residual=True),
+            #ConvNorm(6, 6, 3, (1,1,1), (1,1,1), residual=True),
 
-            for _ in range(2):
-                kernel_size = 3
-                stride = (1, 1, 1)
-                padding = calculate_padding(kernel_size, stride)
+            ConvNorm(6, 12, 3, (1,2,2), (1,0,0)),
+            #ConvNorm(12, 12, 3, (1,1,1), (1,1,1), residual=True),
+            #ConvNorm(12, 12, 3, (1,1,1), (1,1,1), residual=True),
 
-                block1 = ConvBlock(c, c, kernel_size, (1, 1, 1), padding, residual=True)
-                block2 = ConvBlock(c, c, kernel_size, (1, 1, 1), padding, residual=True)
+            ConvNorm(12, 24, 3, (1,2,2), (1,0,0)),
+            #ConvNorm(24, 24, 3, (1,1,1), (1,1,1), residual=True),
+            #ConvNorm(24, 24, 3, (1,1,1), (1,1,1), residual=True),
 
-                self.blocks.append(block1)
-                self.blocks.append(block2)
-
-            if i == NUM_BLOCKS - 1:
-                stride = (1, 3, 3)
-                padding = calculate_padding(kernel_size, stride)
-
-                last_block = ConvBlock(c, c, kernel_size=(1, 2, 2), stride=1, padding=0)
-                self.blocks.append(last_block)
-
-            c *= 2
-        self.seq = nn.Sequential(*self.blocks)
-        self.lstm = nn.LSTM(24, 64, 2, batch_first=True, bidirectional=True)
+            ConvNorm(24, 24, 3, (1,3,3), (1,0,0)),
+        )
+        self.lstm = nn.LSTM(24, 32, 2, batch_first=True, bidirectional=True)
 
     def forward(self, x):
-        x = self.seq(x)
-
-        #print('x', x.shape)
-        x = x.squeeze(-1).squeeze(-1)
-        #print('x after squeeze', x.shape)
-        x = x.view(-1, self.hparams.temporal_dim, 24)
-        #print(x.shape)
+        x = self.convolutions(x)
+        x = reduce(x, 'b c t 1 1 -> b t c', 'mean')
         x, _ = self.lstm(x)
         return x
 
@@ -96,11 +78,14 @@ class MerkelNet(nn.Module):
         super(MerkelNet, self).__init__()
         self.hparams = hparams
         self.encoder = Encoder(hparams)
-        self.decoder = Decoder(128, 64, 4, 128)
+        self.decoder = Decoder(64, 64, 2, self.hparams.n_mels)
 
     def forward(self, x):
         x = self.encoder(x)
         x = self.decoder(x)
         return x
 
-
+if __name__ == "__main__":
+    e = Encoder(HParams())
+    x = torch.randn(1, 3, 50, 48, 48)
+    print(e(x))
