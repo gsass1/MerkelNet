@@ -1,11 +1,17 @@
 import torch
-from torch.utils.data import Dataset, DataLoader
+from torch.utils.data import Dataset, DataLoader, random_split
 import torch.nn as nn
 import torch.optim as optim
 import numpy as np
 import os.path
-from torchinfo import summary
 from argparse import ArgumentParser
+import atexit
+import random
+from torchinfo import summary
+
+import torch
+from torch.utils.tensorboard import SummaryWriter
+writer = SummaryWriter()
 
 T = 50
 SR = 16000
@@ -33,6 +39,7 @@ if not os.path.isdir(args.data_dir):
 class MerkelDataset(Dataset):
     def __init__(self, data_dir):
         self.filepaths = []
+        self.cached_batches = {}
         for f in os.listdir(data_dir):
             if f.endswith('.npz'):
                 self.filepaths.append(os.path.join(data_dir, f))
@@ -40,12 +47,21 @@ class MerkelDataset(Dataset):
     def __len__(self):
         return len(self.filepaths) * DATASET_BATCH_SIZE 
 
+    def get_batch(self, file_idx):
+        if file_idx in self.cached_batches:
+            return self.cached_batches[file_idx]
+
+        data = np.load(self.filepaths[file_idx])
+        self.cached_batches[file_idx] = data
+        return data
+        
 
     def __getitem__(self, idx):
         file_idx = idx // DATASET_BATCH_SIZE 
         data_idx = idx % DATASET_BATCH_SIZE 
 
-        data = np.load(self.filepaths[file_idx])
+        data = self.get_batch(file_idx)
+        # data = np.load(self.filepaths[file_idx])
         X = torch.from_numpy(data['X'][data_idx])
         Y = torch.from_numpy(data['Y'][data_idx])
 
@@ -121,6 +137,7 @@ class LipEncoder(nn.Module):
 
             c *= 2
         self.seq = nn.Sequential(*self.blocks)
+        self.lstm = nn.LSTM(24, 64, 2, batch_first=True, bidirectional=True)
 
     def forward(self, x):
         x = self.seq(x)
@@ -130,38 +147,25 @@ class LipEncoder(nn.Module):
         #print('x after squeeze', x.shape)
         x = x.view(-1, T, 24)
         #print(x.shape)
+        x, _ = self.lstm(x)
         return x
 
 class LipDecoder(nn.Module):
     def __init__(self, input_size, hidden_size, num_layers, output_dim):
         super(LipDecoder, self).__init__()
-        self.hidden_size = hidden_size
-        self.num_layers = num_layers
-
-        # Bi-directional LSTM layer
-        self.lstm = nn.LSTM(input_size, hidden_size, num_layers, batch_first=True, bidirectional=True)
-
-        # Fully connected layer to transform the output dimension
-        self.fc = nn.Linear(hidden_size * 2, output_dim)  # Multiply hidden_size by 2 for bi-directional
+        self.lstm = nn.LSTM(input_size, hidden_size, num_layers, batch_first=True)
+        self.fc = nn.Linear(hidden_size, output_dim)
 
     def forward(self, x):
-        # Set initial states
-        h0 = torch.zeros(self.num_layers * 2, x.size(0), self.hidden_size)  # 2 for bidirectional
-        c0 = torch.zeros(self.num_layers * 2, x.size(0), self.hidden_size)
-
-        # Forward propagate the LSTM
-        out, _ = self.lstm(x, (h0, c0))  # out: tensor of shape (batch_size, seq_length, hidden_size * 2)
-
-        # Transform to output dimension at each time step
-        out = self.fc(out)
-
-        return out
+        x, _ = self.lstm(x)
+        x = self.fc(x)
+        return x
 
 class MerkelNet(nn.Module):
     def __init__(self):
         super(MerkelNet, self).__init__()
         self.encoder = LipEncoder()
-        self.decoder = LipDecoder(24, 64, 2, 128)
+        self.decoder = LipDecoder(128, 64, 4, 128)
 
     def forward(self, x):
         x = self.encoder(x)
@@ -169,7 +173,9 @@ class MerkelNet(nn.Module):
         return x
 
 # Training requirements
-model = MerkelNet()
+device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+model = MerkelNet().to(device)
+
 print(summary(model, input_size=(1, 3, T, 48, 48)))
 
 dataset = MerkelDataset(args.data_dir)
@@ -177,14 +183,72 @@ data_loader = DataLoader(dataset, batch_size=32, shuffle=True)
 criterion = nn.MSELoss()
 optimizer = optim.Adam(model.parameters(), lr=0.001)
 
+# Determine the sizes for train and test sets
+train_size = int(0.8 * len(dataset))
+test_size = len(dataset) - train_size
+
+train_dataset, test_dataset = random_split(dataset, [train_size, test_size])
+
+train_loader = DataLoader(train_dataset, batch_size=32, shuffle=True)
+test_loader = DataLoader(test_dataset, batch_size=32, shuffle=False)
+
+writer.add_graph(model, next(iter(data_loader))[0].to(device))
+
+# overfit on a single batch
+#_, (X, Y) = next(enumerate(data_loader))
+
 # Training loop
-model.train()
-for epoch in range(50):
-    for batch_idx, (X, Y) in enumerate(data_loader):
+for epoch in range(1, 10000):
+    model.train()
+    running_loss = 0.0
+    for batch_idx, (X, Y) in enumerate(train_loader):
+        X = X.to(device)
+        Y = Y.to(device)
+
         optimizer.zero_grad()
         output = model(X)
         loss = criterion(output, Y)
         loss.backward()
         optimizer.step()
+        running_loss += loss.item()
+        break
 
-        print(f'Epoch {epoch}, batch {batch_idx}, loss {loss.item()}')
+    last_loss = running_loss / len(train_loader)
+    print(f'Epoch {epoch}, train loss {last_loss}')
+    writer.add_scalar('loss/train', last_loss, epoch)
+
+    model.eval()
+    running_loss = 0.0
+    with torch.no_grad():
+        for batch_idx, (X, Y) in enumerate(test_loader):
+            X = X.to(device)
+            Y = Y.to(device)
+
+            output = model(X)
+            loss = criterion(output, Y)
+            running_loss += loss.item()
+            break
+
+        average_test_loss = running_loss / len(test_loader)
+        print(f'Epoch {epoch}, test loss: {average_test_loss:.4f}')
+        writer.add_scalar('loss/test', average_test_loss, epoch)
+
+    torch.save(model.state_dict(), 'model.pth')
+
+def on_exit(): 
+    writer.close()
+
+atexit.register(on_exit)
+
+# X = X.to(device)
+# Y = Y.to(device)
+
+# for epoch in range(1000):
+#     optimizer.zero_grad()
+#     output = model(X)
+#     loss = criterion(output, Y)
+#     loss.backward()
+#     optimizer.step()
+
+#     print(f'Epoch {epoch}, loss {loss.item()}')
+
