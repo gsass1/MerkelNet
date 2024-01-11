@@ -189,7 +189,11 @@ class PreprocessWorker(Thread):
                     if not os.path.isfile(clip_path):
                         logging.warning('Video file does not exist:', clip_path)
                         continue
-                    current_video = VideoFileClip(clip_path)
+                    try:
+                        current_video = VideoFileClip(clip_path)
+                    except:
+                        logging.error('Failed to load video, skipping')
+                        continue
 
                 if current_video is None:
                     logging.error('No video loaded')
@@ -225,8 +229,8 @@ class PreprocessWorker(Thread):
                             if len(cropped_frames) != 0 and len(spectrograms) != 0:
                                 X.append(cropped_frames)
                                 Y.append(spectrograms)
-                        except RuntimeError as e:
-                            logging.warning('Exception:', e)
+                        except Exception as e:
+                            logging.error(e)
 
                 while len(X) >= self.hparams.dataset_batch_size:
                     data_path = os.path.join(self.hparams.data_dir, f"batch_{self.num}_{current_batch}.npz")
