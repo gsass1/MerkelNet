@@ -1,0 +1,10 @@
+einops==0.7.0
+face_detection @ git+https://github.com/hukkelas/DSFD-Pytorch-Inference.git@dde9c7dd9cdc9254c2ca345222c86a8ecfa17f5b
+librosa==0.10.1
+matplotlib==3.8.2
+moviepy==1.0.3
+numpy==1.26.3
+opencv-python==4.9.0.80
+torch==2.1.2
+torchinfo==1.8.0
+wandb==0.16.2

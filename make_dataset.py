@@ -10,7 +10,6 @@ from moviepy.editor import VideoFileClip
 import librosa
 import cv2
 from threading import Lock, Thread
-import torch
 import time
 import tempfile
 
@@ -36,15 +35,13 @@ def convert_clip_part_to_training_example(hparams: HParams, detector, clip: Vide
     S = None
 
     # Create a temporary audio file
-    n = random.randint(0, 1000000)
     with tempfile.NamedTemporaryFile(suffix='.wav') as temp_audio_file:
-        filename = '/tmp/temp_audio_' + str(n) + '.wav'
         audio = audio.subclip(0, hparams.temporal_dim / hparams.fps)
         audio = audio.set_duration(hparams.temporal_dim / hparams.fps)
-        audio.write_audiofile(filename, codec='pcm_s16le', verbose=False, write_logfile=False, logger=None)
+        audio.write_audiofile(temp_audio_file.name, codec='pcm_s16le', verbose=False, write_logfile=False, logger=None)
     
         # Load the audio with librosa
-        y, _ = librosa.load(filename, sr=hparams.sr)
+        y, _ = librosa.load(temp_audio_file.name, sr=hparams.sr)
         S = librosa.feature.melspectrogram(
                 y=y,
                 sr=hparams.sr,
