@@ -1,1 +1,7 @@
 data
+*.pth
+runs
+.env
+.DS_Store
+__pycache__
+wandb
