@@ -4,6 +4,7 @@ from torch.utils.data import Dataset
 import torch
 import numpy as np
 from einops import rearrange
+from tqdm import tqdm
 
 from hparams import HParams
 
@@ -44,3 +45,11 @@ class MerkelDataset(Dataset):
         X[:, :, :, :] /= 255.0
 
         return X, Y
+
+    def preload(self):
+        len_batches = len(self)//self.hparams.dataset_batch_size
+        with tqdm(total=len_batches, unit="batch") as pbar:
+            pbar.set_description("Preloading dataset into memory")
+            for i in range(len_batches):
+                self.get_batch(i)
+                pbar.update(1)

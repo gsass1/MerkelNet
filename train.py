@@ -1,10 +1,10 @@
+import sys
 import torch
 from torch.utils.data import DataLoader, random_split
 import torch.nn as nn
 import torch.optim as optim
 import os.path
 from argparse import ArgumentParser
-import atexit
 from tqdm import tqdm
 from torchinfo import summary
 import librosa
@@ -16,12 +16,9 @@ from hparams import HParams, do_arg_parse_with_hparams
 from model import MerkelNet
 from dataset import MerkelDataset
 
-import soundfile as sf
-
 import wandb
 
 def melspectrogram_to_audio(hparams: HParams, S, n_iter=64):
-    print(S.shape)
     S = S.detach().numpy().transpose(1, 0)
 
     # Convert to STFT
@@ -33,12 +30,21 @@ def melspectrogram_to_audio(hparams: HParams, S, n_iter=64):
     return audio
 
 def main():
+    logging.basicConfig(level=logging.INFO,
+                    format='%(asctime)s %(name)-12s %(levelname)-8s %(message)s',
+                    datefmt='%m-%d %H:%M',
+                    filemode='w',
+                    stream=sys.stdout)
+
     parser = ArgumentParser(
                         prog='train',
                         description='Train the network')
     parser.add_argument("--summary", action='store_true')
+    parser.add_argument("--preload", action='store_true')
+    parser.add_argument("--disable-logging", action='store_true')
     
     args, hparams = do_arg_parse_with_hparams(parser)
+    use_wandb = not args.disable_logging
 
     if not os.path.isdir(hparams.data_dir):
         print('Data directory does not exist')
@@ -57,6 +63,9 @@ def main():
     # Get data
     dataset = MerkelDataset(hparams)
 
+    if args.preload:
+        dataset.preload()
+
     total_len = int(len(dataset) * hparams.dataset_ratio)
     train_size = int(hparams.train_test_ratio * total_len)
     test_size = total_len - train_size
@@ -73,15 +82,16 @@ def main():
     #writer.add_graph(model, next(iter(train_loader))[0].to(device))
 
     # start a new wandb run to track this script
-    wandb.init(
-        # set the wandb project where this run will be logged
-        project="lip2speech",
-        
-        # track hyperparameters and run metadata
-        config=hparams._asdict()
-    )
+    if use_wandb:
+        wandb.init(
+            # set the wandb project where this run will be logged
+            project="lip2speech",
+            
+            # track hyperparameters and run metadata
+            config=hparams._asdict()
+        )
 
-    wandb.watch(model, log="all")
+        wandb.watch(model, log="all")
 
     # Training loop
     logging.info(f"Training on {device}, epochs: {hparams.epochs}, batch size: {hparams.batch_size}, total train size: {train_size}, total test size: {test_size}")
@@ -96,10 +106,6 @@ def main():
                 X = X.to(device)
                 Y = Y.to(device)
 
-                audio = melspectrogram_to_audio(hparams, Y[0].cpu())
-                sf.write(f"/tmp/audio_{batch_idx}.wav", audio, hparams.sr)
-                exit(0)
-
                 optimizer.zero_grad()
                 output = model(X)
                 loss = criterion(output, Y)
@@ -109,7 +115,7 @@ def main():
 
                 tepoch.set_postfix(loss=loss.item())
 
-                if batch_idx % hparams.batch_log == 0:
+                if batch_idx % hparams.batch_log == 0 and use_wandb:
                     frames = [wandb.Image(img.cpu(), caption="Input") for img in X[0][0]]
                     ground_truth = wandb.Audio(melspectrogram_to_audio(hparams, Y[0].cpu()), caption="Ground Truth", sample_rate=hparams.sr)
                     output_audio = wandb.Audio(melspectrogram_to_audio(hparams, output[0].cpu()), caption="Output", sample_rate=hparams.sr)
@@ -133,7 +139,8 @@ def main():
                 avg_test_loss = running_loss / len(test_loader)
                 #print(f'Epoch {epoch}, test loss: {average_test_loss:.4f}')
                 #writer.add_scalar('loss/test', avg_test_loss, epoch)
-                wandb.log({"train_loss": avg_train_loss, "test_loss": avg_test_loss})
+                if use_wandb:
+                    wandb.log({"train_loss": avg_train_loss, "test_loss": avg_test_loss})
 
         if epoch % hparams.save_every:
             filename = f"model_{epoch}.pth"
