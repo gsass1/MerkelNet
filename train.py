@@ -116,7 +116,7 @@ def main():
                 tepoch.set_postfix(loss=loss.item())
 
                 if batch_idx % hparams.batch_log == 0 and use_wandb:
-                    frames = [wandb.Image(img.cpu(), caption="Input") for img in X[0][0]]
+                    frames = [wandb.Image(img.detach().numpy()*255.0, caption="Input") for img in X[0][0]]
                     ground_truth = wandb.Audio(melspectrogram_to_audio(hparams, Y[0].cpu()), caption="Ground Truth", sample_rate=hparams.sr)
                     output_audio = wandb.Audio(melspectrogram_to_audio(hparams, output[0].cpu()), caption="Output", sample_rate=hparams.sr)
                     wandb.log({"frames": frames, "ground_truth": ground_truth, "output": output_audio})
