@@ -26,7 +26,6 @@ class MerkelDataset(Dataset):
         X = data['X']
         Y = data['Y']
 
-        X = X.astype(np.float32).transpose(0, 4, 1, 2, 3) / 255.0
         self.cached_batches[file_idx] = (X, Y)
 
         return (X, Y)
