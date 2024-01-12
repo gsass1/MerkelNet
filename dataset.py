@@ -1,9 +1,7 @@
 import os
 import os.path
 from torch.utils.data import Dataset
-import torch
 import numpy as np
-from einops import rearrange
 from tqdm import tqdm
 
 from hparams import HParams
@@ -25,26 +23,31 @@ class MerkelDataset(Dataset):
             return self.cached_batches[file_idx]
 
         data = np.load(self.filepaths[file_idx])
-        self.cached_batches[file_idx] = data
+        X = data['X']
+        Y = data['Y']
+
+        X = X.astype(np.float32).transpose(0, 4, 1, 2, 3) / 255.0
+        self.cached_batches[file_idx] = (X, Y)
+
         return data
 
     def __getitem__(self, idx):
         file_idx = idx // self.hparams.dataset_batch_size 
         data_idx = idx % self.hparams.dataset_batch_size 
 
-        data = self.get_batch(file_idx)
+        (X, Y) = self.get_batch(file_idx)
 
-        X = torch.from_numpy(data['X'][data_idx])
-        Y = torch.from_numpy(data['Y'][data_idx])
+        x = X[data_idx]
+        y = Y[data_idx]
 
         # oops, forgot to do this in make_dataset.py
-        X = X.to(torch.float32)
-        X = rearrange(X, 't h w c -> c t h w')
+        # X = X.to(torch.float32)
+        # X = rearrange(X, 't h w c -> c t h w')
 
-        # normalize pixels
-        X[:, :, :, :] /= 255.0
+        # # normalize pixels
+        # X[:, :, :, :] /= 255.0
 
-        return X, Y
+        return x, y
 
     def preload(self):
         len_batches = len(self)//self.hparams.dataset_batch_size
