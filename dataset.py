@@ -29,7 +29,7 @@ class MerkelDataset(Dataset):
         X = X.astype(np.float32).transpose(0, 4, 1, 2, 3) / 255.0
         self.cached_batches[file_idx] = (X, Y)
 
-        return data
+        return (X, Y)
 
     def __getitem__(self, idx):
         file_idx = idx // self.hparams.dataset_batch_size 

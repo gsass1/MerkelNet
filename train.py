@@ -103,8 +103,8 @@ def main():
 
             running_loss = 0.0
             for batch_idx, (X, Y) in tepoch:
-                print(type(X))
-                print(type(Y))
+                X = X.to(device)
+                Y = Y.to(device)
 
                 optimizer.zero_grad()
                 output = model(X)
