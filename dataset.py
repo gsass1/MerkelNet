@@ -22,7 +22,7 @@ class MerkelDataset(Dataset):
         if file_idx in self.cached_batches:
             return self.cached_batches[file_idx]
 
-        data = np.load(self.filepaths[file_idx])
+        data = np.load(self.filepaths[file_idx], allow_pickle=True)
         X = data['X']
         Y = data['Y']
 
