@@ -20,6 +20,14 @@ class HParams(NamedTuple):
     batch_log: int = 50
     dataset_ratio: float = 1.0
     save_every: int = 10
+    teacher_forcing_ratio: float = 0.5
+
+    encoder_layers: int = 2
+    encoder_hidden_size: int = 128
+    encoder_lip_embedding_size: int = 256 # = encoder_hidden_size*2
+
+    decoder_layers: int = 2
+    decoder_hidden_size: int = 1024
 
 def do_arg_parse_with_hparams(parser: ArgumentParser):
     default_hparams = HParams()

@@ -95,31 +95,30 @@ def main():
 
     # Training loop
     logging.info(f"Training on {device}, epochs: {hparams.epochs}, batch size: {hparams.batch_size}, total train size: {train_size}, total test size: {test_size}")
-
     for epoch in range(1, hparams.epochs):
-        with tqdm(enumerate(train_loader), unit="batch", total=len(train_loader)) as tepoch:
+        with tqdm(enumerate(train_loader), unit="step", total=len(dataset)//hparams.batch_size) as tstep:
             model.train()
-            tepoch.set_description(f"Epoch {epoch}")
+            tstep.set_description(f"Epoch {epoch}")
 
             running_loss = 0.0
-            for batch_idx, (X, Y) in tepoch:
+            for _, (X, Y) in tstep:
                 X = X.to(device)
                 Y = Y.to(device)
 
                 optimizer.zero_grad()
-                output = model(X)
+                output = model(X, Y)
                 loss = criterion(output, Y)
                 loss.backward()
                 optimizer.step()
                 running_loss += loss.item()
 
-                tepoch.set_postfix(loss=loss.item())
+                tstep.set_postfix(loss=loss.item())
 
-                if batch_idx % hparams.batch_log == 0 and use_wandb:
-                    frames = [wandb.Image(img.detach().numpy()*255.0, caption="Input") for img in X[0][0]]
-                    ground_truth = wandb.Audio(melspectrogram_to_audio(hparams, Y[0].cpu()), caption="Ground Truth", sample_rate=hparams.sr)
-                    output_audio = wandb.Audio(melspectrogram_to_audio(hparams, output[0].cpu()), caption="Output", sample_rate=hparams.sr)
-                    wandb.log({"frames": frames, "ground_truth": ground_truth, "output": output_audio})
+                # if batch_idx % hparams.batch_log == 0 and use_wandb:
+                #     frames = [wandb.Image(img.cpu().detach().numpy()*255.0, caption="Input") for img in X[0][0]]
+                #     ground_truth = wandb.Audio(melspectrogram_to_audio(hparams, Y[0].cpu()), caption="Ground Truth", sample_rate=hparams.sr)
+                #     output_audio = wandb.Audio(melspectrogram_to_audio(hparams, output[0].cpu()), caption="Output", sample_rate=hparams.sr)
+                #     wandb.log({"frames": frames, "ground_truth": ground_truth, "output": output_audio})
 
             avg_train_loss = running_loss / len(train_loader)
             #print(f'Epoch {epoch}, train loss {train_loss}')
@@ -142,9 +141,9 @@ def main():
                 if use_wandb:
                     wandb.log({"train_loss": avg_train_loss, "test_loss": avg_test_loss})
 
-        if epoch % hparams.save_every:
+        if epoch % hparams.save_every == 0:
             filename = f"model_{epoch}.pth"
-            logging.info('Saving model to', filename)
+            logging.info(f'Saving model to {filename}')
             torch.save(model.state_dict(), filename)
 
     # def on_exit(): 
