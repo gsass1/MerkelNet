@@ -95,8 +95,9 @@ def main():
 
     # Training loop
     logging.info(f"Training on {device}, epochs: {hparams.epochs}, batch size: {hparams.batch_size}, total train size: {train_size}, total test size: {test_size}")
+    total_steps = train_size // hparams.batch_size
     for epoch in range(1, hparams.epochs):
-        with tqdm(enumerate(train_loader), unit="step", total=len(dataset)//hparams.batch_size) as tstep:
+        with tqdm(enumerate(train_loader), unit="step", total=total_steps) as tstep:
             model.train()
             tstep.set_description(f"Epoch {epoch}")
 
@@ -114,13 +115,16 @@ def main():
 
                 tstep.set_postfix(loss=loss.item())
 
+                if use_wandb:
+                    wandb.log({"train/loss": loss.item(), "train/epoch": epoch})
+
                 # if batch_idx % hparams.batch_log == 0 and use_wandb:
                 #     frames = [wandb.Image(img.cpu().detach().numpy()*255.0, caption="Input") for img in X[0][0]]
                 #     ground_truth = wandb.Audio(melspectrogram_to_audio(hparams, Y[0].cpu()), caption="Ground Truth", sample_rate=hparams.sr)
                 #     output_audio = wandb.Audio(melspectrogram_to_audio(hparams, output[0].cpu()), caption="Output", sample_rate=hparams.sr)
                 #     wandb.log({"frames": frames, "ground_truth": ground_truth, "output": output_audio})
 
-            avg_train_loss = running_loss / len(train_loader)
+            #avg_train_loss = running_loss / len(train_loader)
             #print(f'Epoch {epoch}, train loss {train_loss}')
             #writer.add_scalar('loss/train', avg_train_loss, epoch)
 
@@ -139,7 +143,7 @@ def main():
                 #print(f'Epoch {epoch}, test loss: {average_test_loss:.4f}')
                 #writer.add_scalar('loss/test', avg_test_loss, epoch)
                 if use_wandb:
-                    wandb.log({"train_loss": avg_train_loss, "test_loss": avg_test_loss})
+                    wandb.log({"test/avg_loss": avg_test_loss, "test/epoch": epoch})
 
         if epoch % hparams.save_every == 0:
             filename = f"model_{epoch}.pth"

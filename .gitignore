@@ -1,5 +1,6 @@
 data
 *.pth
+*.npz
 runs
 .env
 .DS_Store

@@ -3,6 +3,7 @@ import os.path
 from torch.utils.data import Dataset
 import numpy as np
 from tqdm import tqdm
+import librosa
 
 from hparams import HParams
 
@@ -55,3 +56,12 @@ class MerkelDataset(Dataset):
             for i in range(len_batches):
                 self.get_batch(i)
                 pbar.update(1)
+
+def normalize(S, hparams: HParams):
+    S_db = librosa.power_to_db(S) - hparams.ref_level_db
+    return np.clip((2*hparams.max_abs_value)*((S_db - hparams.min_level_db) / (-hparams.min_level_db)) - hparams.max_abs_value, -hparams.max_abs_value, hparams.max_abs_value)
+
+def denormalize(D, hparams: HParams):
+    D = (((np.clip(D, -hparams.max_abs_value, hparams.max_abs_value) + hparams.max_abs_value) * -hparams.min_level_db / (2 * hparams.max_abs_value)) + hparams.min_level_db)
+    D = librosa.db_to_power(D + hparams.ref_level_db)
+    return D

@@ -14,12 +14,12 @@ class HParams(NamedTuple):
     dataset_batch_size: int = 32
     batch_size: int = 32
     data_dir: str = "data"
-    epochs: int = 100
+    epochs: int = 1000
     learning_rate: float = 0.001
     train_test_ratio: float = 0.8
     batch_log: int = 50
     dataset_ratio: float = 1.0
-    save_every: int = 10
+    save_every: int = 100
     teacher_forcing_ratio: float = 0.5
 
     encoder_layers: int = 2
@@ -28,6 +28,10 @@ class HParams(NamedTuple):
 
     decoder_layers: int = 2
     decoder_hidden_size: int = 1024
+
+    min_level_db: float = -100.
+    ref_level_db: float = 20.
+    max_abs_value: float = 4.
 
 def do_arg_parse_with_hparams(parser: ArgumentParser):
     default_hparams = HParams()
