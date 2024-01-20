@@ -27,7 +27,7 @@ class HParams(NamedTuple):
     encoder_lip_embedding_size: int = 256 # = encoder_hidden_size*2
 
     decoder_layers: int = 2
-    decoder_hidden_size: int = 1024
+    decoder_hidden_size: int = 256
 
     min_level_db: float = -100.
     ref_level_db: float = 20.

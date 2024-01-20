@@ -41,10 +41,10 @@ def main():
                         description='Train the network')
     parser.add_argument("--summary", action='store_true')
     parser.add_argument("--preload", action='store_true')
-    parser.add_argument("--disable-logging", action='store_true')
+    parser.add_argument("--enable-logging", action='store_true')
     
     args, hparams = do_arg_parse_with_hparams(parser)
-    use_wandb = not args.disable_logging
+    use_wandb = args.enable_logging
 
     if not os.path.isdir(hparams.data_dir):
         print('Data directory does not exist')
