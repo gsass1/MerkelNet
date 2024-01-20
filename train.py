@@ -107,7 +107,7 @@ def main():
                 Y = Y.to(device)
 
                 optimizer.zero_grad()
-                output = model(X, Y)
+                output = model(X)
                 loss = criterion(output, Y)
                 loss.backward()
                 optimizer.step()
