@@ -234,7 +234,7 @@ class PreprocessWorker(Thread):
 
                 while len(X) >= self.hparams.dataset_batch_size:
                     data_path = os.path.join(self.hparams.data_dir, f"batch_{self.num}_{current_batch}.npz")
-                    logging.debug('Saving batch to', data_path)
+                    logging.debug('Saving batch to ' + data_path)
                     np.savez_compressed(data_path, X=X[:self.hparams.dataset_batch_size], Y=Y[:self.hparams.dataset_batch_size])
                     current_batch += 1
                     X = X[self.hparams.dataset_batch_size:]
