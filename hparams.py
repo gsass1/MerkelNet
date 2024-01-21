@@ -22,12 +22,12 @@ class HParams(NamedTuple):
     save_every: int = 100
     teacher_forcing_ratio: float = 0.5
 
-    encoder_layers: int = 2
-    encoder_hidden_size: int = 128
-    encoder_lip_embedding_size: int = 256 # = encoder_hidden_size*2
+    encoder_layers: int = 1
+    encoder_hidden_size: int = 32
+    encoder_lip_embedding_size: int = 64 # = encoder_hidden_size*2
 
-    decoder_transformer_size: int = 256
-    decoder_transformer_heads: int = 4
+    decoder_transformer_size: int = 64
+    decoder_transformer_heads: int = 8
 
     min_level_db: float = -100.
     ref_level_db: float = 20.

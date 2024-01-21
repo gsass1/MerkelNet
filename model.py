@@ -6,20 +6,19 @@ from einops import rearrange, reduce
 from hparams import HParams
 
 class PositionalEncoding(nn.Module):
-    def __init__(self, d_model, dropout=0.1, max_len=5000):
-        super(PositionalEncoding, self).__init__()
+    def __init__(self, d_model: int, dropout: float = 0.1, max_len: int = 5000):
+        super().__init__()
         self.dropout = nn.Dropout(p=dropout)
 
-        pe = torch.zeros(max_len, d_model)
-        position = torch.arange(0, max_len, dtype=torch.float).unsqueeze(1)
-        div_term = torch.exp(torch.arange(0, d_model, 2).float() * (-np.log(10000.0) / d_model))
-        pe[:, 0::2] = torch.sin(position * div_term)
-        pe[:, 1::2] = torch.cos(position * div_term)
-        pe = pe.unsqueeze(0).transpose(0, 1)
+        position = torch.arange(max_len).unsqueeze(1)
+        div_term = torch.exp(torch.arange(0, d_model, 2) * (-np.log(10000.0) / d_model))
+        pe = torch.zeros(max_len, 1, d_model)
+        pe[:, 0, 0::2] = torch.sin(position * div_term)
+        pe[:, 0, 1::2] = torch.cos(position * div_term)
         self.register_buffer('pe', pe)
 
     def forward(self, x):
-        x = x + self.pe[:x.size(0), :]
+        x = x + self.pe[:x.size(1)].squeeze(1)
         return self.dropout(x)
 
 class ConvNorm(nn.Module):
@@ -28,6 +27,7 @@ class ConvNorm(nn.Module):
         self.skip_connection = skip_connection 
         self.conv = nn.Conv3d(in_channels, out_channels, kernel_size=kernel_size, stride=stride, padding=padding)
         self.batch_norm = nn.BatchNorm3d(out_channels)
+  
 
     def forward(self, x):
         identity = x
@@ -40,6 +40,8 @@ class ConvNorm(nn.Module):
 
         out = F.relu(out)
 
+        out = F.dropout(out, 0.5)
+
         return out
 
 class Encoder(nn.Module):
@@ -51,25 +53,27 @@ class Encoder(nn.Module):
         # todo: make this parameterizable
         self.convolutions = nn.Sequential(
             ConvNorm(3, 6, 5, (1,2,2), (2,1,1)),
-            ConvNorm(6, 6, 3, (1,1,1), (1,1,1), skip_connection=True),
-            ConvNorm(6, 6, 3, (1,1,1), (1,1,1), skip_connection=True),
+            #ConvNorm(6, 6, 3, (1,1,1), (1,1,1), skip_connection=True),
+            #ConvNorm(6, 6, 3, (1,1,1), (1,1,1), skip_connection=True),
 
             ConvNorm(6, 12, 3, (1,2,2), (1,0,0)),
-            ConvNorm(12, 12, 3, (1,1,1), (1,1,1), skip_connection=True),
-            ConvNorm(12, 12, 3, (1,1,1), (1,1,1), skip_connection=True),
+            #ConvNorm(12, 12, 3, (1,1,1), (1,1,1), skip_connection=True),
+            #ConvNorm(12, 12, 3, (1,1,1), (1,1,1), skip_connection=True),
 
             ConvNorm(12, 24, 3, (1,2,2), (1,0,0)),
-            ConvNorm(24, 24, 3, (1,1,1), (1,1,1), skip_connection=True),
-            ConvNorm(24, 24, 3, (1,1,1), (1,1,1), skip_connection=True),
+            #ConvNorm(24, 24, 3, (1,1,1), (1,1,1), skip_connection=True),
+            #ConvNorm(24, 24, 3, (1,1,1), (1,1,1), skip_connection=True),
 
             ConvNorm(24, 24, 3, (1,3,3), (1,0,0)),
         )
-        self.lstm = nn.LSTM(24, hparams.encoder_hidden_size, hparams.encoder_layers, batch_first=True, bidirectional=True)
+        #self.embedding = nn.Embedding(24, 128)
+        self.lstm = nn.LSTM(24, hparams.encoder_lip_embedding_size//2, hparams.encoder_layers, batch_first=True, bidirectional=True)
 
     def forward(self, x):
         out = self.convolutions(x)
         out = reduce(out, 'b c t 1 1 -> b t c', 'mean')
         out, hidden = self.lstm(out)
+        #out = self.embedding(out)
         return out, hidden
 
 class Decoder(nn.Module):
@@ -86,9 +90,13 @@ class Decoder(nn.Module):
         # self.attention = BahdanauAttention(hparams.decoder_hidden_size, hparams.encoder_lip_embedding_size)
         # self.lstm = nn.LSTM(input_size, hparams.decoder_hidden_size, hparams.decoder_layers, batch_first=True)
         self.projection = nn.Linear(hparams.decoder_transformer_size, hparams.n_mels)
+        self.positional_embedding_table = nn.Embedding(hparams.temporal_dim, hparams.decoder_transformer_size)
+
 
     def forward(self, x):
         x = self.pos_enc(x)
+        #pos_emb = self.positional_embedding_table(torch.arange(self.hparams.temporal_dim, device=x.device)) # (T, C)
+        #x = x + pos_emb
         x = self.transformer(x)
         x = self.projection(x)
         return x
