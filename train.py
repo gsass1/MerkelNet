@@ -66,7 +66,7 @@ def main():
     if args.preload:
         dataset.preload()
 
-    total_len = int(len(dataset) * hparams.dataset_ratio)
+    total_len = len(dataset)
     train_size = int(hparams.train_test_ratio * total_len)
     test_size = total_len - train_size
 
