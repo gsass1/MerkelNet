@@ -124,7 +124,7 @@ def main():
                 #     output_audio = wandb.Audio(melspectrogram_to_audio(hparams, output[0].cpu()), caption="Output", sample_rate=hparams.sr)
                 #     wandb.log({"frames": frames, "ground_truth": ground_truth, "output": output_audio})
 
-            #avg_train_loss = running_loss / len(train_loader)
+            avg_train_loss = running_loss / len(train_loader)
             #print(f'Epoch {epoch}, train loss {train_loss}')
             #writer.add_scalar('loss/train', avg_train_loss, epoch)
 
@@ -144,6 +144,8 @@ def main():
                 #writer.add_scalar('loss/test', avg_test_loss, epoch)
                 if use_wandb:
                     wandb.log({"test/avg_loss": avg_test_loss, "test/epoch": epoch})
+                else:
+                    print(f"Epoch {epoch}, train loss: {avg_train_loss:.4f}, test loss: {avg_test_loss:.4f}")
 
         if epoch % hparams.save_every == 0:
             filename = f"model_{epoch}.pth"

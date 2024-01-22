@@ -24,10 +24,11 @@ class HParams(NamedTuple):
 
     encoder_layers: int = 1
     encoder_hidden_size: int = 32
-    encoder_lip_embedding_size: int = 64 # = encoder_hidden_size*2
+    encoder_lip_embedding_size: int = 128  # = encoder_hidden_size*2
 
-    decoder_transformer_size: int = 64
+    decoder_transformer_size: int = 128
     decoder_transformer_heads: int = 8
+    decoder_transformer_layers: int = 4
 
     min_level_db: float = -100.
     ref_level_db: float = 20.
