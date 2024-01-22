@@ -13,7 +13,7 @@ class MerkelDataset(Dataset):
         self.filepaths = []
         self.cached_batches = {}
         for f in os.listdir(self.hparams.data_dir):
-            if f.endswith('.npz'):
+            if f.startswith("batch") and f.endswith('.npz'):
                 self.filepaths.append(os.path.join(self.hparams.data_dir, f))
 
     def __len__(self):
