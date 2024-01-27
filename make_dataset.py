@@ -12,6 +12,7 @@ import cv2
 from threading import Lock, Thread
 import time
 import tempfile
+from dataset import normalize
 
 from tqdm import tqdm
 
@@ -54,6 +55,8 @@ def convert_clip_part_to_training_example(hparams: HParams, detector, clip: Vide
     assert S.shape[0] == hparams.n_mels
     assert S.shape[1] == hparams.temporal_dim+1
 
+    S = normalize(S, hparams)
+
     S = S[:, :-1]
     S = S.transpose(1, 0)
 
@@ -78,16 +81,23 @@ def convert_clip_part_to_training_example(hparams: HParams, detector, clip: Vide
     #print('Done Detecting faces...')
 
     # sanity check
+    # if len(detections) != hparams.temporal_dim:
+    #     logging.debug('Number of detections does not match number of frames')
+    #     exit(1)
+
+    # sometimes the retina mobile net detector screws up and misses faces,
+    # if this happens just duplicate the last face frames and hope for the best
     if len(detections) != hparams.temporal_dim:
-        logging.debug('Number of detections does not match number of frames')
-        exit(1)
+        while len(detections) < hparams.temporal_dim:
+            detections.append(detections[-1])
 
     bounding_boxes = []
     for i in range(hparams.temporal_dim):
         face = detections[i]
         if len(face) == 0:
-            logging.debug('No face detected here, skipping')
+            logging.debug('No face detected here!!')
             return [], []
+            # actually don't skip we only use the first bbox anyway
         if len(face) > 1:
             logging.debug('Detected more than one face, skipping')
             return [], []
@@ -164,7 +174,7 @@ class PreprocessWorker(Thread):
         self.counter = counter
 
         self.detector = face_detection.build_detector(
-          "RetinaNetResNet50", confidence_threshold=.5, nms_iou_threshold=.3)
+          "RetinaNetMobileNetV1", confidence_threshold=.5, nms_iou_threshold=.3)
 
 
     def run(self):
@@ -173,72 +183,90 @@ class PreprocessWorker(Thread):
         X, Y = [], []
         current_batch = 0
         with tqdm(enumerate(self.timings), unit="timings", total=len(self.timings)) as ttimings:
-            for idx, timing in ttimings:
-                #logging.info(timing)
+            try:
+                for idx, timing in ttimings:
+                    #logging.info(timing)
 
-                self.counter.increment()
+                    self.counter.increment()
 
-                clip_data = timing.split("|")
-                clip_date, clip_start, clip_end, _, _ = clip_data
-                clip_start, clip_end = float(clip_start), float(clip_end)
-                clip_duration = clip_end - clip_start
+                    clip_data = timing.split("|")
+                    clip_date, clip_start, clip_end, _, _ = clip_data
+                    clip_start, clip_end = float(clip_start), float(clip_end)
+                    clip_duration = clip_end - clip_start
 
-                if clip_date != last_clip_date:
-                    last_clip_date = clip_date
-                    clip_path = os.path.join(self.corpus_path, 'corpus', clip_date, 'video.mp4')
-                    if not os.path.isfile(clip_path):
-                        logging.warning('Video file does not exist:', clip_path)
-                        continue
-                    try:
-                        current_video = VideoFileClip(clip_path)
-                    except:
-                        logging.error('Failed to load video, skipping')
-                        continue
-
-                if current_video is None:
-                    logging.error('No video loaded')
-                    exit(1)
-
-                clip = current_video.subclip(clip_start, clip_end)
-                clip = clip.set_duration(clip_duration)
-
-                total_frames = int(clip_duration * self.hparams.fps)
-                if total_frames < self.hparams.temporal_dim:
-                    logging.info('Clip is too short, skipping')
-                    continue
-
-                clip_times = []
-                remaining_frames = total_frames
-                base_idx = 0
-
-                while remaining_frames > self.hparams.temporal_dim:
-                    clip_times.append(base_idx)
-                    base_idx += self.hparams.temporal_dim
-                    remaining_frames -= self.hparams.temporal_dim
-
-                if remaining_frames > 0:
-                    clip_times.append((total_frames - self.hparams.temporal_dim))
-
-                #print(clip_times)
-
-                with tqdm(clip_times, unit="parts") as tparts:
-                    for clip_start in tparts:
-                        #print('Extracting clip parts at', base_idx, 'remaining', remaining_frames, 'total', total_frames)
+                    if clip_date != last_clip_date:
+                        last_clip_date = clip_date
+                        clip_path = os.path.join(self.corpus_path, 'corpus', clip_date, 'video.mp4')
+                        if not os.path.isfile(clip_path):
+                            logging.warning('Video file does not exist:', clip_path)
+                            continue
                         try:
-                            cropped_frames, spectrograms = convert_clip_part_to_training_example(self.hparams, self.detector, clip, clip_start)
-                            if len(cropped_frames) != 0 and len(spectrograms) != 0:
-                                X.append(cropped_frames)
-                                Y.append(spectrograms)
-                        except Exception as e:
-                            logging.error(e)
+                            current_video = VideoFileClip(clip_path)
+                        except:
+                            logging.error('Failed to load video, skipping')
+                            continue
 
-                while len(X) >= self.hparams.dataset_batch_size:
-                    data_path = os.path.join(self.hparams.data_dir, f"batch_{self.num}_{current_batch}.npz")
-                    logging.debug('Saving batch to ' + data_path)
-                    np.savez_compressed(data_path, X=X[:self.hparams.dataset_batch_size], Y=Y[:self.hparams.dataset_batch_size])
-                    current_batch += 1
-                    X = X[self.hparams.dataset_batch_size:]
-                    Y = Y[self.hparams.dataset_batch_size:]
+                    if current_video is None:
+                        logging.error('No video loaded')
+                        exit(1)
+
+                    clip = current_video.subclip(clip_start, clip_end)
+                    clip = clip.set_duration(clip_duration)
+
+                    total_frames = int(clip_duration * self.hparams.fps)
+                    if total_frames < self.hparams.temporal_dim:
+                        logging.info('Clip is too short, skipping')
+                        continue
+
+                    # Calculate clip times by segmenting the clip into parts of temporal_dim frames length
+                    # but still considering a little bit of overlap as determined by hparams.frame_overlap
+                    clip_times = []
+                    remaining_frames = total_frames
+                    skip_length = self.hparams.temporal_dim - self.hparams.frame_overlap
+                    base_idx = 0
+
+                    while remaining_frames > self.hparams.temporal_dim:
+                        clip_times.append(base_idx)
+                        base_idx += skip_length
+                        remaining_frames -= skip_length
+
+                    if remaining_frames > 0:
+                        clip_times.append((total_frames - self.hparams.temporal_dim))
+
+                    #print(clip_times)
+
+                    with tqdm(clip_times, unit="parts") as tparts:
+                        for clip_start in tparts:
+                            #print('Extracting clip parts at', base_idx, 'remaining', remaining_frames, 'total', total_frames)
+                            try:
+                                cropped_frames, spectrograms = convert_clip_part_to_training_example(self.hparams, self.detector, clip, clip_start)
+                                if len(cropped_frames) != 0 and len(spectrograms) != 0:
+                                    X.append(cropped_frames)
+                                    Y.append(spectrograms)
+                            except Exception as e:
+                                logging.error(e)
+
+                    while len(X) >= self.hparams.dataset_batch_size:
+                        data_path = os.path.join(self.hparams.data_dir, f"batch_{self.num}_{current_batch}.npz")
+                        logging.debug('Saving batch to ' + data_path)
+
+                        batch_x = np.array(X[:self.hparams.dataset_batch_size])
+                        batch_y = np.array(Y[:self.hparams.dataset_batch_size])
+
+                        # B, T, H, W, C -> B, C, T, H ,W
+                        batch_x = batch_x.astype(np.float32).transpose(0, 4, 1, 2, 3)
+
+                        # # normalize pixels
+                        batch_x[:, :, :, :] /= 255.0
+
+                        np.savez_compressed(data_path, X=batch_x, Y=batch_y)
+                        current_batch += 1
+
+                        X = X[self.hparams.dataset_batch_size:]
+                        Y = Y[self.hparams.dataset_batch_size:]
+
+            except Exception as e:
+                print('Error in timing loop', e)
 
 def main():
     logging.basicConfig(level=logging.INFO,

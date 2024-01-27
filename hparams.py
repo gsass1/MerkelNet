@@ -2,16 +2,17 @@ from argparse import ArgumentParser
 from typing import NamedTuple
 
 class HParams(NamedTuple):
-    temporal_dim: int = 50
+    temporal_dim: int = 10
+    frame_overlap: int = 2
     sr: int = 16000
-    n_mels: int = 128
+    n_mels: int = 80
     n_fft: int = 1280
     hop_length: int = 640
-    fps: int = 25
+    fps: int = 24
     f_max: int = 8000
     w: int = 48
     h: int = 48
-    dataset_batch_size: int = 32
+    dataset_batch_size: int = 256
     batch_size: int = 32
     data_dir: str = "data"
     epochs: int = 1000
@@ -21,6 +22,7 @@ class HParams(NamedTuple):
     dataset_ratio: float = 1.0
     save_every: int = 100
     teacher_forcing_ratio: float = 0.5
+    codec: str = 'pcm_s16le'
 
     encoder_layers: int = 1
     encoder_hidden_size: int = 32

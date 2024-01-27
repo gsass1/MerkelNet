@@ -40,13 +40,6 @@ class MerkelDataset(Dataset):
         x = X[data_idx]
         y = Y[data_idx]
 
-        # oops, forgot to do this in make_dataset.py
-        # X = X.to(torch.float32)
-        # X = rearrange(X, 't h w c -> c t h w')
-
-        # # normalize pixels
-        # X[:, :, :, :] /= 255.0
-
         return x, y
 
     def preload(self):
