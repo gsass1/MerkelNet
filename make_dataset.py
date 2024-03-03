@@ -2,7 +2,7 @@ import argparse
 import logging
 import random
 import sys
-import face_detection
+from ultralytics import YOLO
 import numpy as np
 import os
 import os.path
@@ -24,9 +24,9 @@ def convert_clip_part_to_training_example(hparams: HParams, detector, clip: Vide
     # Cut clip to fit training example
     start, end = start_frame / hparams.fps, (start_frame + hparams.temporal_dim) / hparams.fps
     #print('Subclipping', start, end)
-    clip = clip.subclip(start, end)
-    clip = clip.set_duration(hparams.temporal_dim / hparams.fps)
     clip = clip.set_fps(hparams.fps)
+    clip = clip.subclip(start, end)
+    #clip = clip.set_duration(hparams.temporal_dim / hparams.fps)
     audio = clip.audio
 
     if audio is None:
@@ -61,7 +61,7 @@ def convert_clip_part_to_training_example(hparams: HParams, detector, clip: Vide
     S = S.transpose(1, 0)
 
     for i in range(hparams.temporal_dim):
-        frame_time = (i + start_frame) / hparams.fps
+        frame_time = i / hparams.fps
 
         frame = clip.get_frame(frame_time)
         frames.append(frame)
@@ -75,9 +75,10 @@ def convert_clip_part_to_training_example(hparams: HParams, detector, clip: Vide
         #     print('Frame time exceeds audio duration? This should not happen.')
         #     exit(1)
 
-    frame_np = np.array(frames).astype(np.uint8)
+    # T, H, W, C
+    #frame_np = np.array(frames).astype(np.uint8)
     #print('Detecting faces...')
-    detections = detector.batched_detect(frame_np)
+    detections = detector(frames)
     #print('Done Detecting faces...')
 
     # sanity check
@@ -88,8 +89,9 @@ def convert_clip_part_to_training_example(hparams: HParams, detector, clip: Vide
     # sometimes the retina mobile net detector screws up and misses faces,
     # if this happens just duplicate the last face frames and hope for the best
     if len(detections) != hparams.temporal_dim:
-        while len(detections) < hparams.temporal_dim:
-            detections.append(detections[-1])
+        return [], []
+        # while len(detections) < hparams.temporal_dim:
+        #     detections.append(detections[-1])
 
     bounding_boxes = []
     for i in range(hparams.temporal_dim):
@@ -101,14 +103,17 @@ def convert_clip_part_to_training_example(hparams: HParams, detector, clip: Vide
         if len(face) > 1:
             logging.debug('Detected more than one face, skipping')
             return [], []
-        bb = face[0]
+        bb = face[0].boxes.xyxy[0].cpu().numpy().astype(int)
         bounding_boxes.append(bb)
+
+    mean_w = int(np.mean([bb[2] - bb[0] for bb in bounding_boxes]))
+    mean_h = int(np.mean([bb[3] - bb[1] for bb in bounding_boxes]))
+
 
     # smoothen face frames since they are quite jiggly
     # first, lets hard-code the width and height, since those barely change anyway
     # xmin, ymin, xmax, ymax
     bounding_boxes = np.array(bounding_boxes)
-    bounding_boxes = bounding_boxes[:, :-1]
 
     xmin = bounding_boxes[:, 0]
     ymin = bounding_boxes[:, 1]
@@ -133,14 +138,14 @@ def convert_clip_part_to_training_example(hparams: HParams, detector, clip: Vide
     # bounding_boxes[:, 1] = smooth_y
     bounding_boxes[:, 0] = np.repeat(xmin[0], hparams.temporal_dim)
     bounding_boxes[:, 1] = np.repeat(ymin[0], hparams.temporal_dim)
-    bounding_boxes[:, 2] = bounding_boxes[:, 0] + w
-    bounding_boxes[:, 3] = bounding_boxes[:, 1] + h
+    bounding_boxes[:, 2] = bounding_boxes[:, 0] + mean_w
+    bounding_boxes[:, 3] = bounding_boxes[:, 1] + mean_h
     
     cropped_frames = []
     for i in range(hparams.temporal_dim):
         bb = bounding_boxes[i].astype(int)
         cropped_frame = frames[i][bb[1]:bb[3], bb[0]:bb[2]]
-        cropped_frame = cv2.resize(cropped_frame, (hparams.h, hparams.w))
+        cropped_frame = cv2.resize(cropped_frame, (hparams.w, hparams.h))
         cropped_frames.append(cropped_frame)
 
     # cropped_frames + spectograms is the next training example
@@ -173,9 +178,9 @@ class PreprocessWorker(Thread):
         self.hparams = hparams
         self.counter = counter
 
-        self.detector = face_detection.build_detector(
-          "RetinaNetMobileNetV1", confidence_threshold=.5, nms_iou_threshold=.3)
-
+        self.detector = YOLO('./models/face_yolov8m.pt')
+        # self.detector = face_detection.build_detector(
+        #   "RetinaNetMobileNetV1", confidence_threshold=.5, nms_iou_threshold=.3)
 
     def run(self):
         last_clip_date = None
@@ -187,7 +192,7 @@ class PreprocessWorker(Thread):
                 for idx, timing in ttimings:
                     #logging.info(timing)
 
-                    self.counter.increment()
+                    if self.counter is not None: self.counter.increment()
 
                     clip_data = timing.split("|")
                     clip_date, clip_start, clip_end, _, _ = clip_data
@@ -211,7 +216,7 @@ class PreprocessWorker(Thread):
                         exit(1)
 
                     clip = current_video.subclip(clip_start, clip_end)
-                    clip = clip.set_duration(clip_duration)
+                    #clip = clip.set_duration(clip_duration)
 
                     total_frames = int(clip_duration * self.hparams.fps)
                     if total_frames < self.hparams.temporal_dim:
@@ -244,7 +249,9 @@ class PreprocessWorker(Thread):
                                     X.append(cropped_frames)
                                     Y.append(spectrograms)
                             except Exception as e:
+                                print('Error in convert_clip_part_to_training_example', e)
                                 logging.error(e)
+                                raise e
 
                     while len(X) >= self.hparams.dataset_batch_size:
                         data_path = os.path.join(self.hparams.data_dir, f"batch_{self.num}_{current_batch}.npz")
@@ -302,23 +309,26 @@ def main():
     workers = []
     timings_per_worker = len(timings) // num_workers
 
-    counter = ThreadSafeCounter()
+    worker = PreprocessWorker(0, args.corpus_path, hparams, timings, None)
+    worker.run()
 
-    for i in range(num_workers):
-        start = i * timings_per_worker
-        end = start + timings_per_worker
-        if i == num_workers - 1:
-            end = len(timings)
-        worker = PreprocessWorker(i, args.corpus_path, hparams, timings[start:end], counter)
-        worker.start()
-        workers.append(worker)
+    # counter = ThreadSafeCounter()
 
-    while True:
-        for worker in workers:
-            if not worker.is_alive():
-                worker.join()
+    # for i in range(num_workers):
+    #     start = i * timings_per_worker
+    #     end = start + timings_per_worker
+    #     if i == num_workers - 1:
+    #         end = len(timings)
+    #     worker = PreprocessWorker(i, args.corpus_path, hparams, timings[start:end], counter)
+    #     worker.start()
+    #     workers.append(worker)
 
-        time.sleep(5)
+    # while True:
+    #     for worker in workers:
+    #         if not worker.is_alive():
+    #             worker.join()
+
+    #     time.sleep(5)
         # progress = counter.counter / len(timings) * 100
         # print('Progress:', progress, '%')
 
