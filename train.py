@@ -12,6 +12,10 @@ import logging
 
 import torch
 
+import matplotlib.pyplot as plt
+import seaborn as sns
+import numpy as np
+
 from hparams import HParams, do_arg_parse_with_hparams
 from model import MerkelNet
 from dataset import MerkelDataset
@@ -29,6 +33,28 @@ def melspectrogram_to_audio(hparams: HParams, S, n_iter=64):
     audio = librosa.griffinlim(linear_segment, n_iter=n_iter, hop_length=hparams.hop_length)
 
     return audio
+
+
+def plot_alignment_heatmap(alignments):
+    print(alignments.shape)
+    heat = np.mean(alignments, axis=0)
+    print(heat.shape)
+    rng = np.arange(0, 50, 10)
+
+    s = sns.heatmap(heat, xticklabels=False, yticklabels=False, cmap='viridis', annot=False)
+    s.set_xticks(rng)
+    s.set_yticks(rng)
+    s.set_xticklabels(rng)
+    s.set_yticklabels(rng)
+    plt.title('Alignment')
+    plt.xlabel('Decoder timestep')
+    plt.ylabel('Encoder timestep')
+    plt.ylim(0, 50)
+    plt.xlim(0, 50)
+
+    plt.savefig('/tmp/alignment.png')
+    plt.close()
+    return '/tmp/alignment.png'
 
 def main():
     logging.basicConfig(level=logging.INFO,
@@ -130,6 +156,7 @@ def main():
             model.eval()
             running_loss = 0.0
             with torch.no_grad():
+                all_alignments = []
                 for _, (X, Y) in enumerate(test_loader):
                     X = X.to(device)
                     Y = Y.to(device)
@@ -142,12 +169,13 @@ def main():
                     loss = decoder_loss + postnet_loss
                     running_loss += loss.item()
 
+                    all_alignments += [alignments.detach().cpu().numpy()]
+
                 avg_test_loss = running_loss / len(test_loader)
 
                 if use_wandb:
-                    x_labels = [f"encoder_{i}" for i in range(alignments[0].shape[0])]
-                    y_labels = [f"decoder_{i}" for i in range(alignments[0].shape[1])]
-                    wandb.log({"test/avg_loss": avg_test_loss, "test/epoch": epoch, "attention_alignment": wandb.plots.HeatMap(x_labels, y_labels, alignments[0].detach().cpu().numpy(), show_text=False)})
+                    all_alignments = np.concatenate(all_alignments, axis=0)
+                    wandb.log({"test/avg_loss": avg_test_loss, "test/epoch": epoch, "attention_alignment_heatmap": wandb.Image(plot_alignment_heatmap(all_alignments))})
                 else:
                     print(f"Epoch {epoch}, train loss: {avg_train_loss:.4f}, test loss: {avg_test_loss:.4f}")
 

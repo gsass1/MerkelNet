@@ -201,7 +201,7 @@ class Decoder(nn.Module):
             mel_outputs += [mel_output]
             alignments += [self.attn_weights]
         mel_outputs = torch.stack(mel_outputs, dim=1) # (batch, time, n_mels)
-        alignments = torch.stack(alignments, dim=-1) # (batch, encoder_time, decoder_time)
+        alignments = torch.stack(alignments, dim=1) # (batch, decoder_time, encoder_time)
         return mel_outputs, alignments
 
     def decode(self, encoder_output, prenet_output):
