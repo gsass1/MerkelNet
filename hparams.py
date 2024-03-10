@@ -20,6 +20,7 @@ class HParams(NamedTuple):
     train_test_ratio: float = 0.9
     batch_log: int = 50
     dataset_ratio: float = 1.0
+    cache_data: bool = True
     save_every: int = 100
     teacher_forcing_ratio: float = 0.5
     codec: str = 'pcm_s16le'
