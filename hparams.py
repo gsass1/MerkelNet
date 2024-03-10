@@ -12,7 +12,7 @@ class HParams(NamedTuple):
     f_max: int = 8000
     w: int = 96
     h: int = 96
-    dataset_batch_size: int = 256
+    dataset_batch_size: int = 64
     batch_size: int = 32
     data_dir: str = "data"
     epochs: int = 1000
@@ -24,13 +24,23 @@ class HParams(NamedTuple):
     teacher_forcing_ratio: float = 0.5
     codec: str = 'pcm_s16le'
 
-    encoder_layers: int = 1
-    encoder_hidden_size: int = 32
-    encoder_lip_embedding_size: int = 128  # = encoder_hidden_size*2
+    teacher_forcing_ratio: float = 0.5
 
-    decoder_transformer_size: int = 128
-    decoder_transformer_heads: int = 8
-    decoder_transformer_layers: int = 4
+    prenet_dim: int = 128
+    postnet_dim: int = 512
+    postnet_kernel_size: int = 5
+    postnet_n_convs: int = 5
+    postnet_dropout: float = 0.5
+
+    attn_hidden_size: int = 1024
+    attn_dim: int = 128
+    attn_n_filters: int = 32
+    attn_kernel_size: int = 31
+
+    encoder_layers: int = 2
+    encoder_hidden_size: int = 128
+
+    decoder_hidden_size: int = 1024
 
     min_level_db: float = -100.
     ref_level_db: float = 20.

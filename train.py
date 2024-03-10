@@ -107,9 +107,15 @@ def main():
                 Y = Y.to(device)
 
                 optimizer.zero_grad()
-                output = model(X)
-                loss = criterion(output, Y)
+
+                decoder_output, postnet_output = model(X, Y)
+
+                decoder_loss = criterion(decoder_output, Y)
+                postnet_loss = criterion(postnet_output, Y)
+
+                loss = decoder_loss + postnet_loss
                 loss.backward()
+
                 optimizer.step()
                 running_loss += loss.item()
 
@@ -125,8 +131,6 @@ def main():
                 #     wandb.log({"frames": frames, "ground_truth": ground_truth, "output": output_audio})
 
             avg_train_loss = running_loss / len(train_loader)
-            #print(f'Epoch {epoch}, train loss {train_loss}')
-            #writer.add_scalar('loss/train', avg_train_loss, epoch)
 
             model.eval()
             running_loss = 0.0
@@ -135,13 +139,16 @@ def main():
                     X = X.to(device)
                     Y = Y.to(device)
 
-                    output = model(X)
-                    loss = criterion(output, Y)
+                    decoder_output, postnet_output = model(X, Y)
+
+                    decoder_loss = criterion(decoder_output, Y)
+                    postnet_loss = criterion(postnet_output, Y)
+
+                    loss = decoder_loss + postnet_loss
                     running_loss += loss.item()
 
                 avg_test_loss = running_loss / len(test_loader)
-                #print(f'Epoch {epoch}, test loss: {average_test_loss:.4f}')
-                #writer.add_scalar('loss/test', avg_test_loss, epoch)
+
                 if use_wandb:
                     wandb.log({"test/avg_loss": avg_test_loss, "test/epoch": epoch})
                 else:

@@ -5,22 +5,6 @@ import numpy as np
 from einops import rearrange, reduce
 from hparams import HParams
 
-class PositionalEncoding(nn.Module):
-    def __init__(self, d_model: int, dropout: float = 0.1, max_len: int = 5000):
-        super().__init__()
-        self.dropout = nn.Dropout(p=dropout)
-
-        position = torch.arange(max_len).unsqueeze(1)
-        div_term = torch.exp(torch.arange(0, d_model, 2) * (-np.log(10000.0) / d_model))
-        pe = torch.zeros(max_len, 1, d_model)
-        pe[:, 0, 0::2] = torch.sin(position * div_term)
-        pe[:, 0, 1::2] = torch.cos(position * div_term)
-        self.register_buffer('pe', pe)
-
-    def forward(self, x):
-        x = x + self.pe[:x.size(1)].squeeze(1)
-        return self.dropout(x)
-
 class ConvNorm(nn.Module):
     def __init__(self, in_channels, out_channels, kernel_size, stride, padding, dropout, skip_connection=False):
         super(ConvNorm, self).__init__()
@@ -44,37 +28,130 @@ class ConvNorm(nn.Module):
 
         return out
 
+class Prenet(nn.Module):
+    hparams: HParams
+
+    def __init__(self, hparams: HParams):
+        super(Prenet, self).__init__()
+        self.hparams = hparams
+        self.fc = nn.Linear(hparams.n_mels, hparams.prenet_dim)
+
+    # x - previous mel spectrogram: (batch, n_mels)
+    def forward(self, x):
+        x = F.dropout(F.relu(self.fc(x)), self.hparams.dropout) # (batch, prenet_dim)
+        return x
+
+def conv1d(in_channels, out_channels, kernel_size, stride):
+    return nn.Sequential(
+        nn.Conv1d(in_channels, out_channels, kernel_size=kernel_size, stride=stride, padding=int((kernel_size-1)/2)),
+        nn.BatchNorm1d(out_channels))
+
+class Postnet(nn.Module):
+    hparams: HParams
+
+    def __init__(self, hparams: HParams):
+        super(Postnet, self).__init__()
+        self.hparams = hparams
+        self.convs = nn.ModuleList()
+
+        self.convs.append(conv1d(hparams.n_mels, hparams.postnet_dim, hparams.postnet_kernel_size, 1))
+        for _ in range(hparams.postnet_n_convs-1):
+            self.convs.append(conv1d(hparams.postnet_dim, hparams.postnet_dim, hparams.postnet_kernel_size, 1))
+        self.convs.append(conv1d(hparams.postnet_dim, hparams.n_mels, hparams.postnet_kernel_size, 1))
+
+    def forward(self, x):
+        """
+        x: mel spectogram (batch, time, n_mels)
+        """
+        x = rearrange(x, 'b t c -> b c t')
+
+        for conv in self.convs[:-1]:
+            x = conv(x)
+            x = F.dropout(F.tanh(x), self.hparams.postnet_dropout, self.training)
+        x = F.dropout(self.convs[-1](x), self.hparams.postnet_dropout, self.training)
+        return rearrange(x, 'b c t -> b t c')
+
+class Attention(nn.Module):
+    hparams: HParams
+
+    def __init__(self, hparams: HParams):
+        super(Attention, self).__init__()
+        self.hparams = hparams
+
+        # Memory FC
+        self.M = nn.Linear(hparams.encoder_hidden_size, hparams.attn_dim, bias=False)
+
+        # Query FC
+        self.Q = nn.Linear(hparams.attn_hidden_size, hparams.attn_dim, bias=False)
+
+        # Weight FC
+        self.W = nn.Linear(hparams.attn_dim, 1, bias=False)
+
+        # Location FC
+        self.L = nn.Linear(hparams.attn_n_filters, hparams.attn_dim, bias=False)
+        self.location_conv = nn.Conv1d(2, hparams.attn_n_filters, hparams.attn_kernel_size, padding=int((hparams.attn_kernel_size-1)/2), bias=False, stride=1)
+
+    # query - previous decoder output: (batch, n_mels)
+    # encoder_output: (batch, time, encoder_hidden_size)
+    # prev_attn: cumulative and prev attn weights: (batch, 2, time)
+    def forward(self, query, encoder_output, prev_attn):
+        """
+        query: previous decoder output (batch, n_mels)
+        encoder_output: (batch, time, encoder_hidden_size)
+        prev_attn: cumulative and prev attn weights concatenated together: (batch, 2, time)
+        """
+
+        # Location-aware attention
+        prev_attn = self.location_conv(prev_attn)
+        prev_attn = rearrange(prev_attn, 'b c t -> b t c')
+        prev_attn = self.L(prev_attn) # (batch, time, attn_dim)
+
+        # in tacotron this is done in the decoder first, we only need to do this once
+        q = self.Q(query.unsqueeze(1)) # (batch, 1, attn_dim)
+
+        memory = self.M(encoder_output) # (batch, time, attn_dime)
+
+        energies = self.W(torch.tanh(q + memory + prev_attn))
+        energies = energies.squeeze(-1) # (batch, time)
+
+        attn_weights = F.softmax(energies, dim=1)
+
+        attn_context = torch.bmm(attn_weights.unsqueeze(1), encoder_output)
+        attn_context = attn_context.squeeze(1) # (batch, encoder_hidden_size)
+
+        return attn_context, attn_weights
+
 class Encoder(nn.Module):
     hparams: HParams
 
     def __init__(self, hparams):
         super(Encoder, self).__init__()
         self.hparams = hparams
-        # todo: make this parameterizable
+
         self.convolutions = nn.Sequential(
             ConvNorm(3, 6, 5, (1,2,2), (2,1,1), self.hparams.dropout),
             ConvNorm(6, 6, 3, (1,1,1), (1,1,1), self.hparams.dropout, skip_connection=True),
-            #ConvNorm(6, 6, 3, (1,1,1), (1,1,1), skip_connection=True),
+            #ConvNorm(6, 6, 3, (1,1,1), (1,1,1), self.hparams.dropout, skip_connection=True),
 
             ConvNorm(6, 12, 3, (1,2,2), (1,0,0), self.hparams.dropout),
             ConvNorm(12, 12, 3, (1,1,1), (1,1,1), self.hparams.dropout, skip_connection=True),
-            #ConvNorm(12, 12, 3, (1,1,1), (1,1,1), skip_connection=True),
+            #ConvNorm(12, 12, 3, (1,1,1), (1,1,1), self.hparams.dropout, skip_connection=True),
 
             ConvNorm(12, 24, 3, (1,2,2), (1,0,0), self.hparams.dropout),
             ConvNorm(24, 24, 3, (1,1,1), (1,1,1), self.hparams.dropout, skip_connection=True),
-            #ConvNorm(24, 24, 3, (1,1,1), (1,1,1), skip_connection=True),
+            #ConvNorm(24, 24, 3, (1,1,1), (1,1,1), self.hparams.dropout, skip_connection=True),
 
-            ConvNorm(24, 24, 3, (1,3,3), (1,0,0), self.hparams.dropout),
+            ConvNorm(24, 48, 3, (1,2,2), (1,0,0), self.hparams.dropout),
+
+            ConvNorm(48, 48, 5, (1,3,3), (2,1,1), self.hparams.dropout),
         )
-        #self.embedding = nn.Embedding(24, 128)
-        self.lstm = nn.LSTM(24, hparams.encoder_lip_embedding_size//2, hparams.encoder_layers, batch_first=True, bidirectional=True)
+        self.lstm = nn.LSTM(48, hparams.encoder_hidden_size//2, hparams.encoder_layers, batch_first=True, bidirectional=True)
 
     def forward(self, x):
         out = self.convolutions(x)
         out = reduce(out, 'b c t 1 1 -> b t c', 'mean')
-        out, hidden = self.lstm(out)
-        #out = self.embedding(out)
-        return out, hidden
+        out, _ = self.lstm(out)
+        return out
 
 class Decoder(nn.Module):
     hparams: HParams
@@ -83,19 +160,74 @@ class Decoder(nn.Module):
         super(Decoder, self).__init__()
         self.hparams = hparams
 
-        self.transformer = nn.TransformerEncoder(
-            encoder_layer=nn.TransformerEncoderLayer(d_model=hparams.decoder_transformer_size, nhead=hparams.decoder_transformer_heads, batch_first=True, dropout=hparams.dropout),
-            num_layers=hparams.decoder_transformer_layers)
-        self.pos_enc = PositionalEncoding(hparams.decoder_transformer_size, dropout=hparams.dropout, max_len=hparams.temporal_dim)
-        self.projection = nn.Linear(hparams.decoder_transformer_size, hparams.n_mels)
+        self.prenet = Prenet(hparams)
 
+        self.attn = Attention(hparams)
+        self.attn_lstm = nn.LSTMCell(hparams.encoder_hidden_size + hparams.prenet_dim, hparams.attn_hidden_size)
 
-    def forward(self, x):
-        x = self.pos_enc(x)
-        x = self.transformer(x)
-        x = F.dropout(x, self.hparams.dropout)
-        x = self.projection(x)
-        return x
+        self.lstm = nn.LSTMCell(hparams.attn_hidden_size + hparams.encoder_hidden_size, hparams.decoder_hidden_size)
+        self.proj = nn.Linear(hparams.decoder_hidden_size + hparams.encoder_hidden_size, hparams.n_mels)
+
+    def forward(self, encoder_output, targets):
+        """
+        encoder_outputs: (batch, time, encoder_hidden_size)
+        targets: ground truth mel spectograms (batch, time, n_mels)
+        """
+
+        device = encoder_output.device
+
+        # Hidden state of the attention RNN
+        self.attn_hidden = torch.zeros(encoder_output.size(0), self.hparams.attn_hidden_size).to(device)
+        self.attn_cell = torch.zeros(encoder_output.size(0), self.hparams.attn_hidden_size).to(device)
+
+        # Hidden states of the decoder RNN
+        self.decoder_hidden = torch.zeros(encoder_output.size(0), self.hparams.decoder_hidden_size).to(device)
+        self.decoder_cell = torch.zeros(encoder_output.size(0), self.hparams.decoder_hidden_size).to(device)
+
+        # Attention states
+        self.attn_weights = torch.zeros(encoder_output.size(0), encoder_output.size(1)).to(device)
+        self.attn_weights_sum = torch.zeros(encoder_output.size(0), encoder_output.size(1)).to(device)
+        self.attn_context = torch.zeros(encoder_output.size(0), self.hparams.encoder_hidden_size).to(device)
+
+        # First decoder input is always just an empty vector
+        first_decoder_input = torch.zeros(encoder_output.size(0), 1, self.hparams.n_mels).to(device)
+        decoder_inputs = torch.cat((first_decoder_input, targets), dim=1)
+        decoder_inputs = self.prenet(decoder_inputs)
+
+        mel_outputs = []
+        while len(mel_outputs) < decoder_inputs.size(1)-1:
+            decoder_input = decoder_inputs[:, len(mel_outputs)]
+            mel_output = self.decode(encoder_output, decoder_input)
+            mel_outputs += [mel_output]
+        mel_outputs = torch.stack(mel_outputs, dim=1) # (batch, time, n_mels)
+        return mel_outputs
+
+    def decode(self, encoder_output, prenet_output):
+        """
+        encoder_outputs: (batch, time, encoder_hidden_size)
+        decoder_input: previous processed mel spectogram (batch, prenet_dim)
+        """
+
+        # Attention LSTM forward pass by concatenating the previous decoder input and the prenet output
+        cell_input = torch.cat((prenet_output, self.attn_context), dim=1)
+        self.attn_hidden, self.attn_cell = self.attn_lstm(cell_input, (self.attn_hidden, self.attn_cell))
+        self.attn_hidden = F.dropout(self.attn_hidden, self.hparams.dropout, self.training)
+
+        # Perform location-aware attention
+        attn_weights_cat = torch.cat((self.attn_weights.unsqueeze(1), self.attn_weights_sum.unsqueeze(1)), dim=1)
+        self.attn_context, self.attn_weights = self.attn(self.attn_hidden, encoder_output, attn_weights_cat)
+        self.attn_weights_sum += self.attn_weights
+
+        # Decoder LSTM forward pass by concatenating the attention context and the attention hidden state
+        cell_input = torch.cat((self.attn_context, self.attn_hidden), dim=1)
+        self.decoder_hidden, self.decoder_cell = self.lstm(cell_input, (self.decoder_hidden, self.decoder_cell))
+        self.decoder_hidden = F.dropout(self.decoder_hidden, self.hparams.dropout, self.training)
+
+        # Project the decoder hidden state to the mel spectogram
+        proj_input = torch.cat((self.decoder_hidden, self.attn_context), dim=1)
+        output = self.proj(proj_input)
+
+        return output
 
 class MerkelNet(nn.Module):
     hparams: HParams
@@ -105,14 +237,38 @@ class MerkelNet(nn.Module):
         self.hparams = hparams
         self.encoder = Encoder(hparams)
         self.decoder = Decoder(hparams)
+        self.postnet = Postnet(hparams)
 
-    def forward(self, x):
-        x, _ = self.encoder(x)
-        x = self.decoder(x)
-        return x
+    def forward(self, frames, targets):
+        """
+        frames: (B, C, T, H ,W)
+        targets: (B, T, n_mels)
+        """
+
+        encoder_output = self.encoder(frames) # (batch, time, encoder_hidden_size)
+
+        decoder_output = self.decoder(encoder_output, targets) # (batch, time, n_mels)
+        postnet_output = self.postnet(decoder_output) + decoder_output.detach() # (batch, time, n_mels)
+
+        return decoder_output, postnet_output
 
 if __name__ == "__main__":
-    e = Decoder(HParams())
-    x = torch.randn(1, 50, 256)
-    y = e(x)
-    print(y.shape)
+    # a = Attention(HParams())
+
+    # #attn_weights = torch.rand(32, 50)
+    # #attn_weights_cum = torch.rand(32, 50)
+
+    # attn_weights_cat = torch.randn(32, 2, 50)
+    # query = torch.rand(32, 1024)
+    # encoder_output = torch.rand(32, 50, 128)
+
+    # ctx, weights = a(query, encoder_output, attn_weights_cat)
+
+    # print(ctx.shape, weights.shape)
+
+    # d = Decoder(HParams())
+    # print(d(torch.rand(32, 50, 128), torch.rand(32, 50, 80))[0].shape)
+
+    p = Postnet(HParams())
+
+    print(p(torch.rand(32, 50, 80)).shape)

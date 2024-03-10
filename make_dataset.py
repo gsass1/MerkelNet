@@ -78,7 +78,7 @@ def convert_clip_part_to_training_example(hparams: HParams, detector, clip: Vide
     # T, H, W, C
     #frame_np = np.array(frames).astype(np.uint8)
     #print('Detecting faces...')
-    detections = detector(frames)
+    detections = detector(frames, verbose=False)
     #print('Done Detecting faces...')
 
     # sanity check
@@ -186,16 +186,23 @@ class PreprocessWorker(Thread):
         last_clip_date = None
         current_video = None
         X, Y = [], []
-        current_batch = 0
+        current_batch = 239
+        skip = 4550
         with tqdm(enumerate(self.timings), unit="timings", total=len(self.timings)) as ttimings:
-            try:
-                for idx, timing in ttimings:
-                    #logging.info(timing)
+            for idx, timing in ttimings:
+                if idx == skip:
+                    break
+
+            for idx, timing in ttimings:
+                try:
+                    logging.info(timing)
 
                     if self.counter is not None: self.counter.increment()
 
                     clip_data = timing.split("|")
-                    clip_date, clip_start, clip_end, _, _ = clip_data
+                    clip_date, clip_start, clip_end, clip_text, _ = clip_data
+                    # skip interviewer questions, presumably
+                    if "?" in clip_text: continue
                     clip_start, clip_end = float(clip_start), float(clip_end)
                     clip_duration = clip_end - clip_start
 
@@ -207,8 +214,8 @@ class PreprocessWorker(Thread):
                             continue
                         try:
                             current_video = VideoFileClip(clip_path)
-                        except:
-                            logging.error('Failed to load video, skipping')
+                        except Exception as e:
+                            logging.error('Failed to load video, skipping', e)
                             continue
 
                     if current_video is None:
@@ -251,7 +258,7 @@ class PreprocessWorker(Thread):
                             except Exception as e:
                                 print('Error in convert_clip_part_to_training_example', e)
                                 logging.error(e)
-                                raise e
+                                #raise e
 
                     while len(X) >= self.hparams.dataset_batch_size:
                         data_path = os.path.join(self.hparams.data_dir, f"batch_{self.num}_{current_batch}.npz")
@@ -272,8 +279,9 @@ class PreprocessWorker(Thread):
                         X = X[self.hparams.dataset_batch_size:]
                         Y = Y[self.hparams.dataset_batch_size:]
 
-            except Exception as e:
-                print('Error in timing loop', e)
+                except:
+                    print('Error in timing loop')
+                    #raise e
 
 def main():
     logging.basicConfig(level=logging.INFO,
@@ -309,28 +317,28 @@ def main():
     workers = []
     timings_per_worker = len(timings) // num_workers
 
-    worker = PreprocessWorker(0, args.corpus_path, hparams, timings, None)
-    worker.run()
+    # worker = PreprocessWorker(0, args.corpus_path, hparams, timings, None)
+    # worker.run()
 
-    # counter = ThreadSafeCounter()
+    counter = ThreadSafeCounter()
 
-    # for i in range(num_workers):
-    #     start = i * timings_per_worker
-    #     end = start + timings_per_worker
-    #     if i == num_workers - 1:
-    #         end = len(timings)
-    #     worker = PreprocessWorker(i, args.corpus_path, hparams, timings[start:end], counter)
-    #     worker.start()
-    #     workers.append(worker)
+    for i in range(num_workers):
+        start = i * timings_per_worker
+        end = start + timings_per_worker
+        if i == num_workers - 1:
+            end = len(timings)
+        worker = PreprocessWorker(i, args.corpus_path, hparams, timings[start:end], counter)
+        worker.start()
+        workers.append(worker)
 
-    # while True:
-    #     for worker in workers:
-    #         if not worker.is_alive():
-    #             worker.join()
+    while True:
+        for worker in workers:
+            if not worker.is_alive():
+                worker.join()
 
-    #     time.sleep(5)
-        # progress = counter.counter / len(timings) * 100
-        # print('Progress:', progress, '%')
+        time.sleep(5)
+        progress = counter.counter / len(timings) * 100
+        print('Progress:', progress, '%')
 
 if __name__ == '__main__':
     main()
