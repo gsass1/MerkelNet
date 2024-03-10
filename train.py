@@ -17,6 +17,7 @@ from model import MerkelNet
 from dataset import MerkelDataset
 
 import wandb
+import wandb.plots
 
 def melspectrogram_to_audio(hparams: HParams, S, n_iter=64):
     S = S.detach().numpy().transpose(1, 0)
@@ -102,13 +103,13 @@ def main():
             tstep.set_description(f"Epoch {epoch}")
 
             running_loss = 0.0
-            for _, (X, Y) in tstep:
+            for batch_idx, (X, Y) in tstep:
                 X = X.to(device)
                 Y = Y.to(device)
 
                 optimizer.zero_grad()
 
-                decoder_output, postnet_output = model(X, Y)
+                decoder_output, postnet_output, _ = model(X, Y)
 
                 decoder_loss = criterion(decoder_output, Y)
                 postnet_loss = criterion(postnet_output, Y)
@@ -124,12 +125,6 @@ def main():
                 if use_wandb:
                     wandb.log({"train/loss": loss.item(), "train/epoch": epoch})
 
-                # if batch_idx % hparams.batch_log == 0 and use_wandb:
-                #     frames = [wandb.Image(img.cpu().detach().numpy()*255.0, caption="Input") for img in X[0][0]]
-                #     ground_truth = wandb.Audio(melspectrogram_to_audio(hparams, Y[0].cpu()), caption="Ground Truth", sample_rate=hparams.sr)
-                #     output_audio = wandb.Audio(melspectrogram_to_audio(hparams, output[0].cpu()), caption="Output", sample_rate=hparams.sr)
-                #     wandb.log({"frames": frames, "ground_truth": ground_truth, "output": output_audio})
-
             avg_train_loss = running_loss / len(train_loader)
 
             model.eval()
@@ -139,7 +134,7 @@ def main():
                     X = X.to(device)
                     Y = Y.to(device)
 
-                    decoder_output, postnet_output = model(X, Y)
+                    decoder_output, postnet_output, alignments = model(X, Y)
 
                     decoder_loss = criterion(decoder_output, Y)
                     postnet_loss = criterion(postnet_output, Y)
@@ -150,7 +145,9 @@ def main():
                 avg_test_loss = running_loss / len(test_loader)
 
                 if use_wandb:
-                    wandb.log({"test/avg_loss": avg_test_loss, "test/epoch": epoch})
+                    x_labels = [f"encoder_{i}" for i in range(alignments[0].shape[0])]
+                    y_labels = [f"decoder_{i}" for i in range(alignments[0].shape[1])]
+                    wandb.log({"test/avg_loss": avg_test_loss, "test/epoch": epoch, "attention_alignment": wandb.plots.HeatMap(x_labels, y_labels, alignments[0].detach().cpu().numpy(), show_text=False)})
                 else:
                     print(f"Epoch {epoch}, train loss: {avg_train_loss:.4f}, test loss: {avg_test_loss:.4f}")
 

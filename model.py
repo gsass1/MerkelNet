@@ -194,13 +194,15 @@ class Decoder(nn.Module):
         decoder_inputs = torch.cat((first_decoder_input, targets), dim=1)
         decoder_inputs = self.prenet(decoder_inputs)
 
-        mel_outputs = []
+        mel_outputs, alignments = [], []
         while len(mel_outputs) < decoder_inputs.size(1)-1:
             decoder_input = decoder_inputs[:, len(mel_outputs)]
             mel_output = self.decode(encoder_output, decoder_input)
             mel_outputs += [mel_output]
+            alignments += [self.attn_weights]
         mel_outputs = torch.stack(mel_outputs, dim=1) # (batch, time, n_mels)
-        return mel_outputs
+        alignments = torch.stack(alignments, dim=-1) # (batch, encoder_time, decoder_time)
+        return mel_outputs, alignments
 
     def decode(self, encoder_output, prenet_output):
         """
@@ -247,10 +249,10 @@ class MerkelNet(nn.Module):
 
         encoder_output = self.encoder(frames) # (batch, time, encoder_hidden_size)
 
-        decoder_output = self.decoder(encoder_output, targets) # (batch, time, n_mels)
+        decoder_output, alignments = self.decoder(encoder_output, targets) # (batch, time, n_mels)
         postnet_output = self.postnet(decoder_output) + decoder_output.detach() # (batch, time, n_mels)
 
-        return decoder_output, postnet_output
+        return decoder_output, postnet_output, alignments
 
 if __name__ == "__main__":
     # a = Attention(HParams())
