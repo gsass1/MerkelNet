@@ -36,9 +36,7 @@ def melspectrogram_to_audio(hparams: HParams, S, n_iter=64):
 
 
 def plot_alignment_heatmap(alignments):
-    print(alignments.shape)
     heat = np.mean(alignments, axis=0)
-    print(heat.shape)
     rng = np.arange(0, 50, 10)
 
     s = sns.heatmap(heat, xticklabels=False, yticklabels=False, cmap='viridis', annot=False)
