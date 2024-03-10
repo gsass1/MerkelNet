@@ -15,7 +15,7 @@ class HParams(NamedTuple):
     dataset_batch_size: int = 64
     batch_size: int = 32
     data_dir: str = "data"
-    chechkpoint_dir: str = "checkpoints"
+    checkpoint_dir: str = "checkpoints"
     epochs: int = 1000
     learning_rate: float = 1e-3
     train_test_ratio: float = 0.9

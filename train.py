@@ -180,8 +180,8 @@ def main():
                     print(f"Epoch {epoch}, train loss: {avg_train_loss:.4f}, test loss: {avg_test_loss:.4f}")
 
         if epoch % hparams.save_every == 0:
-            os.makedirs(hparams.chechkpoint_dir, exist_ok=True)
-            filename = os.path.join(hparams.chechkpoint_dir, f"model_{epoch}.pth")
+            os.makedirs(hparams.checkpoint_dir, exist_ok=True)
+            filename = os.path.join(hparams.checkpoint_dir, f"model_{epoch}.pth")
             logging.info(f'Saving model to {filename}')
             torch.save(model.state_dict(), filename)
 
