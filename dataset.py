@@ -17,8 +17,7 @@ class MerkelDataset(Dataset):
                 self.filepaths.append(os.path.join(self.hparams.data_dir, f))
 
     def __len__(self):
-        #return int(len(self.filepaths) * self.hparams.dataset_ratio) * self.hparams.dataset_batch_size 
-        return self.hparams.dataset_batch_size
+        return int(len(self.filepaths) * self.hparams.dataset_ratio) * self.hparams.dataset_batch_size 
 
     def get_batch(self, file_idx):
         if file_idx in self.cached_batches:
