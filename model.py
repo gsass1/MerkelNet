@@ -94,7 +94,7 @@ class Attention(nn.Module):
     # query - previous decoder output: (batch, n_mels)
     # encoder_output: (batch, time, encoder_hidden_size)
     # prev_attn: cumulative and prev attn weights: (batch, 2, time)
-    def forward(self, query, encoder_output, prev_attn):
+    def forward(self, query, encoder_output, processed_encoder_output, prev_attn):
         """
         query: previous decoder output (batch, n_mels)
         encoder_output: (batch, time, encoder_hidden_size)
@@ -106,12 +106,11 @@ class Attention(nn.Module):
         prev_attn = rearrange(prev_attn, 'b c t -> b t c')
         prev_attn = self.L(prev_attn) # (batch, time, attn_dim)
 
-        # in tacotron this is done in the decoder first, we only need to do this once
         q = self.Q(query.unsqueeze(1)) # (batch, 1, attn_dim)
 
-        memory = self.M(encoder_output) # (batch, time, attn_dime)
+        #memory = self.M(encoder_output) # (batch, time, attn_dime)
 
-        energies = self.W(torch.tanh(q + memory + prev_attn))
+        energies = self.W(torch.tanh(q + processed_encoder_output + prev_attn))
         energies = energies.squeeze(-1) # (batch, time)
 
         attn_weights = F.softmax(energies, dim=1)
@@ -194,6 +193,9 @@ class Decoder(nn.Module):
         decoder_inputs = torch.cat((first_decoder_input, targets), dim=1)
         decoder_inputs = self.prenet(decoder_inputs)
 
+        # Calculate memory only once
+        self.processed_encoder_output = self.attn.M(encoder_output) # (batch, 1, attn_dim)
+
         mel_outputs, alignments = [], []
         while len(mel_outputs) < decoder_inputs.size(1)-1:
             decoder_input = decoder_inputs[:, len(mel_outputs)]
@@ -217,7 +219,7 @@ class Decoder(nn.Module):
 
         # Perform location-aware attention
         attn_weights_cat = torch.cat((self.attn_weights.unsqueeze(1), self.attn_weights_sum.unsqueeze(1)), dim=1)
-        self.attn_context, self.attn_weights = self.attn(self.attn_hidden, encoder_output, attn_weights_cat)
+        self.attn_context, self.attn_weights = self.attn(self.attn_hidden, encoder_output, self.processed_encoder_output, attn_weights_cat)
         self.attn_weights_sum += self.attn_weights
 
         # Decoder LSTM forward pass by concatenating the attention context and the attention hidden state
