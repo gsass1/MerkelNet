@@ -24,7 +24,7 @@ class ConvNorm(nn.Module):
 
         out = F.relu(out)
 
-        out = F.dropout(out, self.dropout)
+        out = F.dropout(out, self.dropout, self.training)
 
         return out
 
@@ -38,7 +38,7 @@ class Prenet(nn.Module):
 
     # x - previous mel spectrogram: (batch, n_mels)
     def forward(self, x):
-        x = F.dropout(F.relu(self.fc(x)), self.hparams.dropout) # (batch, prenet_dim)
+        x = F.dropout(F.relu(self.fc(x)), self.hparams.dropout, self.training) # (batch, prenet_dim)
         return x
 
 def conv1d(in_channels, out_channels, kernel_size, stride):
@@ -167,10 +167,9 @@ class Decoder(nn.Module):
         self.lstm = nn.LSTMCell(hparams.attn_hidden_size + hparams.encoder_hidden_size, hparams.decoder_hidden_size)
         self.proj = nn.Linear(hparams.decoder_hidden_size + hparams.encoder_hidden_size, hparams.n_mels)
 
-    def forward(self, encoder_output, targets):
+    def setup_states(self, encoder_output):
         """
         encoder_outputs: (batch, time, encoder_hidden_size)
-        targets: ground truth mel spectograms (batch, time, n_mels)
         """
 
         device = encoder_output.device
@@ -188,20 +187,30 @@ class Decoder(nn.Module):
         self.attn_weights_sum = torch.zeros(encoder_output.size(0), encoder_output.size(1)).to(device)
         self.attn_context = torch.zeros(encoder_output.size(0), self.hparams.encoder_hidden_size).to(device)
 
-        # First decoder input is always just an empty vector
-        first_decoder_input = torch.zeros(encoder_output.size(0), 1, self.hparams.n_mels).to(device)
-        decoder_inputs = torch.cat((first_decoder_input, targets), dim=1)
-        decoder_inputs = self.prenet(decoder_inputs)
-
         # Calculate memory only once
         self.processed_encoder_output = self.attn.M(encoder_output) # (batch, 1, attn_dim)
+
+
+    def forward(self, encoder_output, targets):
+        """
+        encoder_outputs: (batch, time, encoder_hidden_size)
+        targets: ground truth mel spectograms (batch, time, n_mels)
+        """
+
+        device = encoder_output.device
+        self.setup_states(encoder_output)
+
+        # First decoder input is always just an empty vector
+        first_decoder_input = torch.zeros(encoder_output.size(0), 1, self.hparams.n_mels).to(device)
+        decoder_inputs = torch.cat((first_decoder_input, alignments.shapeoder_input, targets), dim=1)
+        decoder_inputs = self.prenet(decoder_inputs)
 
         mel_outputs, alignments = [], []
         while len(mel_outputs) < decoder_inputs.size(1)-1:
             decoder_input = decoder_inputs[:, len(mel_outputs)]
             mel_output = self.decode(encoder_output, decoder_input)
             mel_outputs += [mel_output]
-            alignments += [self.attn_weights]
+            alignments += [self.attn_weights.detach()]
         mel_outputs = torch.stack(mel_outputs, dim=1) # (batch, time, n_mels)
         alignments = torch.stack(alignments, dim=1) # (batch, decoder_time, encoder_time)
         return mel_outputs, alignments
@@ -233,6 +242,24 @@ class Decoder(nn.Module):
 
         return output
 
+    def inference(self, encoder_output):
+        self.setup_states(encoder_output)
+        decoder_input = torch.zeros(encoder_output.size(0), 1, self.hparams.n_mels).to(encoder_output.device)
+        
+        mel_outputs, alignments = [], []
+        while len(mel_outputs) < encoder_output.size(1):
+            decoder_input = self.prenet(decoder_input).squeeze(1)
+            mel_output = self.decode(encoder_output, decoder_input)
+
+            mel_outputs += [mel_output]
+            alignments += [self.attn_weights.detach()]
+
+            decoder_input = mel_output
+
+        mel_outputs = torch.stack(mel_outputs, dim=1) # (batch, time, n_mels)
+        alignments = torch.stack(alignments, dim=1) # (batch, decoder_time, encoder_time)
+        return mel_outputs, alignments
+
 class MerkelNet(nn.Module):
     hparams: HParams
 
@@ -256,6 +283,18 @@ class MerkelNet(nn.Module):
 
         return decoder_output, postnet_output, alignments
 
+    def inference(self, frames):
+        """
+        frames: (B, C, T, H ,W)
+        targets: (B, T, n_mels)
+        """
+        encoder_output = self.encoder(frames) # (batch, time, encoder_hidden_size)
+        decoder_output, alignments = self.decoder.inference(encoder_output) # (batch, time, n_mels)
+
+        postnet_output = self.postnet(decoder_output) + decoder_output.detach() # (batch, time, n_mels)
+
+        return postnet_output, alignments
+
 if __name__ == "__main__":
     # a = Attention(HParams())
 
@@ -273,6 +312,6 @@ if __name__ == "__main__":
     # d = Decoder(HParams())
     # print(d(torch.rand(32, 50, 128), torch.rand(32, 50, 80))[0].shape)
 
-    p = Postnet(HParams())
-
-    print(p(torch.rand(32, 50, 80)).shape)
+    m = MerkelNet(HParams())
+    m.eval()
+    print(m.inference(torch.randn(32, 3, 50, 96, 96)))
