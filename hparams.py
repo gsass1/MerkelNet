@@ -40,7 +40,7 @@ class HParams(NamedTuple):
     attn_kernel_size: int = 31
 
     encoder_layers: int = 2
-    encoder_hidden_size: int = 128
+    encoder_hidden_size: int = 256
 
     decoder_hidden_size: int = 1024
 
