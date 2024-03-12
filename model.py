@@ -202,7 +202,7 @@ class Decoder(nn.Module):
 
         # First decoder input is always just an empty vector
         first_decoder_input = torch.zeros(encoder_output.size(0), 1, self.hparams.n_mels).to(device)
-        decoder_inputs = torch.cat((first_decoder_input, alignments.shapeoder_input, targets), dim=1)
+        decoder_inputs = torch.cat((first_decoder_input, targets), dim=1)
         decoder_inputs = self.prenet(decoder_inputs)
 
         mel_outputs, alignments = [], []
@@ -294,24 +294,3 @@ class MerkelNet(nn.Module):
         postnet_output = self.postnet(decoder_output) + decoder_output.detach() # (batch, time, n_mels)
 
         return postnet_output, alignments
-
-if __name__ == "__main__":
-    # a = Attention(HParams())
-
-    # #attn_weights = torch.rand(32, 50)
-    # #attn_weights_cum = torch.rand(32, 50)
-
-    # attn_weights_cat = torch.randn(32, 2, 50)
-    # query = torch.rand(32, 1024)
-    # encoder_output = torch.rand(32, 50, 128)
-
-    # ctx, weights = a(query, encoder_output, attn_weights_cat)
-
-    # print(ctx.shape, weights.shape)
-
-    # d = Decoder(HParams())
-    # print(d(torch.rand(32, 50, 128), torch.rand(32, 50, 80))[0].shape)
-
-    m = MerkelNet(HParams())
-    m.eval()
-    print(m.inference(torch.randn(32, 3, 50, 96, 96)))
