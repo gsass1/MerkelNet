@@ -12,6 +12,7 @@ import cv2
 from threading import Lock, Thread
 import time
 import tempfile
+import noisereduce as nr
 from dataset import normalize
 
 from tqdm import tqdm
@@ -43,8 +44,12 @@ def convert_clip_part_to_training_example(hparams: HParams, detector, clip: Vide
     
         # Load the audio with librosa
         y, _ = librosa.load(temp_audio_file.name, sr=hparams.sr)
+
+        # Reduce noise
+        y_reduced = nr.reduce_noise(y, sr=hparams.sr)
+
         S = librosa.feature.melspectrogram(
-                y=y,
+                y=y_reduced,
                 sr=hparams.sr,
                 n_mels=hparams.n_mels,
                 fmax=hparams.f_max,
@@ -186,8 +191,8 @@ class PreprocessWorker(Thread):
         last_clip_date = None
         current_video = None
         X, Y = [], []
-        current_batch = 239
-        skip = 4550
+        current_batch = 0
+        skip = 0
         with tqdm(enumerate(self.timings), unit="timings", total=len(self.timings)) as ttimings:
             for idx, timing in ttimings:
                 if idx == skip:
@@ -195,8 +200,6 @@ class PreprocessWorker(Thread):
 
             for idx, timing in ttimings:
                 try:
-                    logging.info(timing)
-
                     if self.counter is not None: self.counter.increment()
 
                     clip_data = timing.split("|")
@@ -279,8 +282,8 @@ class PreprocessWorker(Thread):
                         X = X[self.hparams.dataset_batch_size:]
                         Y = Y[self.hparams.dataset_batch_size:]
 
-                except:
-                    print('Error in timing loop')
+                except Exception as e:
+                    print('Error in timing loop', e)
                     #raise e
 
 def main():
@@ -317,9 +320,6 @@ def main():
     workers = []
     timings_per_worker = len(timings) // num_workers
 
-    # worker = PreprocessWorker(0, args.corpus_path, hparams, timings, None)
-    # worker.run()
-
     counter = ThreadSafeCounter()
 
     for i in range(num_workers):
@@ -337,8 +337,8 @@ def main():
                 worker.join()
 
         time.sleep(5)
-        progress = counter.counter / len(timings) * 100
-        print('Progress:', progress, '%')
+        #progress = counter.counter / len(timings) * 100
+        #print('Progress:', progress, '%')
 
 if __name__ == '__main__':
     main()
