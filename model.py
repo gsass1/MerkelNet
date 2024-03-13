@@ -130,17 +130,18 @@ class Encoder(nn.Module):
         self.convolutions = nn.Sequential(
             ConvNorm(3, 6, 5, (1,2,2), (2,1,1), self.hparams.dropout),
             ConvNorm(6, 6, 3, (1,1,1), (1,1,1), self.hparams.dropout, skip_connection=True),
-            #ConvNorm(6, 6, 3, (1,1,1), (1,1,1), self.hparams.dropout, skip_connection=True),
+            ConvNorm(6, 6, 3, (1,1,1), (1,1,1), self.hparams.dropout, skip_connection=True),
 
             ConvNorm(6, 12, 3, (1,2,2), (1,0,0), self.hparams.dropout),
             ConvNorm(12, 12, 3, (1,1,1), (1,1,1), self.hparams.dropout, skip_connection=True),
-            #ConvNorm(12, 12, 3, (1,1,1), (1,1,1), self.hparams.dropout, skip_connection=True),
+            ConvNorm(12, 12, 3, (1,1,1), (1,1,1), self.hparams.dropout, skip_connection=True),
 
             ConvNorm(12, 24, 3, (1,2,2), (1,0,0), self.hparams.dropout),
             ConvNorm(24, 24, 3, (1,1,1), (1,1,1), self.hparams.dropout, skip_connection=True),
-            #ConvNorm(24, 24, 3, (1,1,1), (1,1,1), self.hparams.dropout, skip_connection=True),
+            ConvNorm(24, 24, 3, (1,1,1), (1,1,1), self.hparams.dropout, skip_connection=True),
 
             ConvNorm(24, 48, 3, (1,2,2), (1,0,0), self.hparams.dropout),
+            ConvNorm(48, 48, 3, (1,1,1), (1,1,1), self.hparams.dropout, skip_connection=True),
 
             ConvNorm(48, 48, 5, (1,3,3), (2,1,1), self.hparams.dropout),
         )
