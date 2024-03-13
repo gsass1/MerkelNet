@@ -2,8 +2,8 @@ from argparse import ArgumentParser
 from typing import NamedTuple
 
 class HParams(NamedTuple):
-    temporal_dim: int = 50
-    frame_overlap: int = 0
+    temporal_dim: int = 75
+    frame_overlap: int = 10
     sr: int = 16000
     n_mels: int = 80
     n_fft: int = 1280
@@ -12,7 +12,7 @@ class HParams(NamedTuple):
     f_max: int = 8000
     w: int = 96
     h: int = 96
-    dataset_batch_size: int = 64
+    dataset_batch_size: int = 256
     batch_size: int = 32
     data_dir: str = "data"
     checkpoint_dir: str = "checkpoints"
