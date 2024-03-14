@@ -35,9 +35,9 @@ def melspectrogram_to_audio(hparams: HParams, S, n_iter=64):
     return audio
 
 
-def plot_alignment_heatmap(alignments):
+def plot_alignment_heatmap(hparams, alignments):
     heat = np.mean(alignments, axis=0)
-    rng = np.arange(0, 50, 10)
+    rng = np.arange(0, hparams.temporal_dim, 10)
 
     s = sns.heatmap(heat, xticklabels=False, yticklabels=False, cmap='viridis', annot=False)
     s.set_xticks(rng)
@@ -47,8 +47,8 @@ def plot_alignment_heatmap(alignments):
     plt.title('Alignment')
     plt.xlabel('Decoder timestep')
     plt.ylabel('Encoder timestep')
-    plt.ylim(0, 50)
-    plt.xlim(0, 50)
+    plt.ylim(0, hparams.temporal_dim)
+    plt.xlim(0, hparams.temporal_dim)
 
     plt.savefig('/tmp/alignment.png')
     plt.close()
@@ -173,7 +173,7 @@ def main():
 
                 if use_wandb:
                     all_alignments = np.concatenate(all_alignments, axis=0)
-                    wandb.log({"test/avg_loss": avg_test_loss, "test/epoch": epoch, "attention_alignment_heatmap": wandb.Image(plot_alignment_heatmap(all_alignments))})
+                    wandb.log({"test/avg_loss": avg_test_loss, "test/epoch": epoch, "attention_alignment_heatmap": wandb.Image(plot_alignment_heatmap(hparams, all_alignments))})
                 else:
                     print(f"Epoch {epoch}, train loss: {avg_train_loss:.4f}, test loss: {avg_test_loss:.4f}")
 
