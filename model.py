@@ -280,7 +280,7 @@ class MerkelNet(nn.Module):
         encoder_output = self.encoder(frames) # (batch, time, encoder_hidden_size)
 
         decoder_output, alignments = self.decoder(encoder_output, targets) # (batch, time, n_mels)
-        postnet_output = self.postnet(decoder_output) + decoder_output.detach() # (batch, time, n_mels)
+        postnet_output = self.postnet(decoder_output) + decoder_output # (batch, time, n_mels)
 
         return decoder_output, postnet_output, alignments
 
@@ -292,6 +292,6 @@ class MerkelNet(nn.Module):
         encoder_output = self.encoder(frames) # (batch, time, encoder_hidden_size)
         decoder_output, alignments = self.decoder.inference(encoder_output) # (batch, time, n_mels)
 
-        postnet_output = self.postnet(decoder_output) + decoder_output.detach() # (batch, time, n_mels)
+        postnet_output = self.postnet(decoder_output) + decoder_output # (batch, time, n_mels)
 
         return postnet_output, alignments
