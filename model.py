@@ -128,24 +128,25 @@ class Encoder(nn.Module):
         self.hparams = hparams
 
         self.convolutions = nn.Sequential(
-            ConvNorm(3, 6, 5, (1,2,2), (2,1,1), self.hparams.dropout),
-            ConvNorm(6, 6, 3, (1,1,1), (1,1,1), self.hparams.dropout, skip_connection=True),
-            ConvNorm(6, 6, 3, (1,1,1), (1,1,1), self.hparams.dropout, skip_connection=True),
+            nn.Conv3d(3, 32, (5, 3, 3), (1, 2, 2), (2, 0, 0)),
+            nn.BatchNorm3d(32),
+            nn.ReLU(),
+            nn.MaxPool3d((1, 2, 2), (1, 2, 2), 0),
+            nn.Dropout(hparams.dropout),
 
-            ConvNorm(6, 12, 3, (1,2,2), (1,0,0), self.hparams.dropout),
-            ConvNorm(12, 12, 3, (1,1,1), (1,1,1), self.hparams.dropout, skip_connection=True),
-            ConvNorm(12, 12, 3, (1,1,1), (1,1,1), self.hparams.dropout, skip_connection=True),
+            nn.Conv3d(32, 64, (5, 3, 3), (1, 2, 2), (2, 0, 0)),
+            nn.BatchNorm3d(64),
+            nn.ReLU(),
+            nn.MaxPool3d((1, 2, 2), (1, 2, 2), 0),
+            nn.Dropout(hparams.dropout),
 
-            ConvNorm(12, 24, 3, (1,2,2), (1,0,0), self.hparams.dropout),
-            ConvNorm(24, 24, 3, (1,1,1), (1,1,1), self.hparams.dropout, skip_connection=True),
-            ConvNorm(24, 24, 3, (1,1,1), (1,1,1), self.hparams.dropout, skip_connection=True),
-
-            ConvNorm(24, 48, 3, (1,2,2), (1,0,0), self.hparams.dropout),
-            ConvNorm(48, 48, 3, (1,1,1), (1,1,1), self.hparams.dropout, skip_connection=True),
-
-            ConvNorm(48, 48, 5, (1,3,3), (2,1,1), self.hparams.dropout),
+            nn.Conv3d(64, 128, (5, 3, 3), (1, 2, 2), (2, 0, 0)),
+            nn.BatchNorm3d(128),
+            nn.ReLU(),
+            nn.MaxPool3d((1, 2, 2), (1, 2, 2), 0),
+            nn.Dropout(hparams.dropout),
         )
-        self.lstm = nn.LSTM(48, hparams.encoder_hidden_size//2, hparams.encoder_layers, batch_first=True, bidirectional=True)
+        self.lstm = nn.LSTM(128, hparams.encoder_hidden_size//2, hparams.encoder_layers, batch_first=True, bidirectional=True)
 
     def forward(self, x):
         out = self.convolutions(x)
