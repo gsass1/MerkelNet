@@ -12,7 +12,7 @@ class HParams(NamedTuple):
     f_max: int = 8000
     w: int = 96
     h: int = 96
-    dataset_batch_size: int = 256
+    dataset_batch_size: int = 64
     batch_size: int = 32
     data_dir: str = "data"
     checkpoint_dir: str = "checkpoints"
