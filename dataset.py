@@ -19,7 +19,10 @@ class MerkelDataset(Dataset):
                 self.filepaths.append(os.path.join(self.hparams.data_dir, f))
 
     def __len__(self):
-        return int(len(self.filepaths) * self.hparams.dataset_ratio) * self.hparams.dataset_batch_size * (AUGMENTATION_METHODS+1)
+        return self.raw_len() * (AUGMENTATION_METHODS+1)
+
+    def raw_len(self):
+        return int(len(self.filepaths) * self.hparams.dataset_ratio) * self.hparams.dataset_batch_size
 
     def get_batch(self, file_idx):
         if file_idx in self.cached_batches:
@@ -71,7 +74,7 @@ class MerkelDataset(Dataset):
         return x
 
     def preload(self):
-        len_batches = len(self)//self.hparams.dataset_batch_size
+        len_batches = self.raw_len()//self.hparams.dataset_batch_size
         with tqdm(total=len_batches, unit="batch") as pbar:
             pbar.set_description("Preloading dataset into memory")
             for i in range(len_batches):
