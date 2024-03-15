@@ -55,7 +55,7 @@ class MerkelDataset(Dataset):
     def perform_image_augmentation(self, x, augm):
         if augm == 1:
             # flip horizontally
-            x = x[:, :, :, ::-1]
+            x = x[:, :, :, ::-1].copy()
         elif augm == 2:
             # Adjust saturation
             # Convert image to grayscale (mean across the color channels, assuming x shape is C, T, H, W)
