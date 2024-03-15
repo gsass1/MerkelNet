@@ -2,7 +2,6 @@ import argparse
 import logging
 import random
 import sys
-from ultralytics import YOLO
 import numpy as np
 import os
 import os.path
@@ -14,12 +13,31 @@ import time
 import tempfile
 import noisereduce as nr
 from dataset import normalize
+import numpy as np
+
+import mediapipe as mp
+from mediapipe.tasks import python
+from mediapipe.tasks.python import vision
+from mediapipe.framework.formats import landmark_pb2
+from mediapipe.python.solutions.face_mesh_connections import FACEMESH_LIPS
+from mediapipe import solutions
+
+model_path = './models/face_landmarker.task'
+
+BaseOptions = mp.tasks.BaseOptions
+FaceLandmarker = mp.tasks.vision.FaceLandmarker
+FaceLandmarkerOptions = mp.tasks.vision.FaceLandmarkerOptions
+VisionRunningMode = mp.tasks.vision.RunningMode
+
+options = FaceLandmarkerOptions(
+    base_options=BaseOptions(model_asset_path=model_path),
+    running_mode=VisionRunningMode.IMAGE)
 
 from tqdm import tqdm
 
 from hparams import HParams, do_arg_parse_with_hparams
 
-def convert_clip_part_to_training_example(hparams: HParams, detector, clip: VideoFileClip, start_frame):
+def convert_clip_part_to_training_example(hparams: HParams, landmarker, clip: VideoFileClip, start_frame):
     frames = []
 
     # Cut clip to fit training example
@@ -65,96 +83,92 @@ def convert_clip_part_to_training_example(hparams: HParams, detector, clip: Vide
     S = S[:, :-1]
     S = S.transpose(1, 0)
 
+    landmarks = []
+
+    frames = []
     for i in range(hparams.temporal_dim):
         frame_time = i / hparams.fps
-
         frame = clip.get_frame(frame_time)
+        mp_image = mp.Image(image_format=mp.ImageFormat.SRGB, data=frame)
+        result = landmarker.detect(mp_image)
+
+        # no face or more than once face
+        if len(result.face_landmarks) != 1:
+            return [], []
         frames.append(frame)
+        landmarks.append(result.face_landmarks[0])
 
-        # if spectrogram_column < len(S[0]):
-        #     mel_vector = S[:, spectrogram_column]
-        #     spectrograms.append(mel_vector)
-        #     # mel_vector is the Mel spectrogram vector corresponding to the current frame
-        # else:
-        #     # Handle cases where the frame time exceeds the audio duration
-        #     print('Frame time exceeds audio duration? This should not happen.')
-        #     exit(1)
-
-    # T, H, W, C
-    #frame_np = np.array(frames).astype(np.uint8)
-    #print('Detecting faces...')
-    detections = detector(frames, verbose=False)
-    #print('Done Detecting faces...')
-
-    # sanity check
-    # if len(detections) != hparams.temporal_dim:
-    #     logging.debug('Number of detections does not match number of frames')
-    #     exit(1)
-
-    # sometimes the retina mobile net detector screws up and misses faces,
-    # if this happens just duplicate the last face frames and hope for the best
-    if len(detections) != hparams.temporal_dim:
-        return [], []
-        # while len(detections) < hparams.temporal_dim:
-        #     detections.append(detections[-1])
-
-    bounding_boxes = []
+    # smoothe mean of the mouth position
+    mxx = []
+    myy = []
     for i in range(hparams.temporal_dim):
-        face = detections[i]
-        if len(face) == 0:
-            logging.debug('No face detected here!!')
-            return [], []
-            # actually don't skip we only use the first bbox anyway
-        if len(face) > 1:
-            logging.debug('Detected more than one face, skipping')
-            return [], []
-        bb = face[0].boxes.xyxy[0].cpu().numpy().astype(int)
-        bounding_boxes.append(bb)
+        all_points = []
 
-    mean_w = int(np.mean([bb[2] - bb[0] for bb in bounding_boxes]))
-    mean_h = int(np.mean([bb[3] - bb[1] for bb in bounding_boxes]))
+        for j in FACEMESH_LIPS:
+            all_points.append(landmarks[i][j[0]])
+            all_points.append(landmarks[i][j[1]])
+        mx = np.mean([point.x for point in all_points])
+        my = np.mean([point.y for point in all_points])
+        mxx.append(mx)
+        myy.append(my)
 
+    def smooth_positions(positions, window_size=5):
+        smoothed = []
+        for i in range(len(positions)):
+            # Determine the start and end of the window for averaging
+            start = max(0, i - window_size + 1)
+            end = i + 1
+            # Calculate the average within this window
+            window_average = np.mean(positions[start:end])
+            smoothed.append(window_average)
+        return smoothed
 
-    # smoothen face frames since they are quite jiggly
-    # first, lets hard-code the width and height, since those barely change anyway
-    # xmin, ymin, xmax, ymax
-    bounding_boxes = np.array(bounding_boxes)
+    # Assuming mxx and myy are filled with the mean x and y positions of the mouth
+    window_size = 5  # Adjust this value as needed for your smoothing
+    smoothed_mxx = smooth_positions(mxx, window_size=window_size)
+    smoothed_myy = smooth_positions(myy, window_size=window_size)
 
-    xmin = bounding_boxes[:, 0]
-    ymin = bounding_boxes[:, 1]
-    xmax = bounding_boxes[:, 2]
-    ymax = bounding_boxes[:, 3]
-
-    w, h = xmax[0] - xmin[0], ymax[0] - ymin[0]
-
-    # now lets smoothe out xmin and ymin throughout the entire clip
-    smooth_x, smooth_y = np.zeros(hparams.temporal_dim), np.zeros(hparams.temporal_dim)
-    for t in range(1, hparams.temporal_dim-1):
-        smooth_x[t] = (xmin[t+1]+xmin[t-1])/2
-        smooth_y[t] = (ymin[t+1]+ymin[t-1])/2
-
-    smooth_x[0] = xmin[0]
-    smooth_y[0] = ymin[0]
-
-    smooth_x[hparams.temporal_dim-1] = xmin[hparams.temporal_dim-1]
-    smooth_y[hparams.temporal_dim-1] = ymin[hparams.temporal_dim-1]
-
-    # bounding_boxes[:, 0] = smooth_x
-    # bounding_boxes[:, 1] = smooth_y
-    bounding_boxes[:, 0] = np.repeat(xmin[0], hparams.temporal_dim)
-    bounding_boxes[:, 1] = np.repeat(ymin[0], hparams.temporal_dim)
-    bounding_boxes[:, 2] = bounding_boxes[:, 0] + mean_w
-    bounding_boxes[:, 3] = bounding_boxes[:, 1] + mean_h
-    
     cropped_frames = []
+    reference_distance = 100
+
     for i in range(hparams.temporal_dim):
-        bb = bounding_boxes[i].astype(int)
-        cropped_frame = frames[i][bb[1]:bb[3], bb[0]:bb[2]]
-        cropped_frame = cv2.resize(cropped_frame, (hparams.w, hparams.h))
+        frame = frames[i]
+        frame = cv2.resize(frame, (1280, 720))
+
+        all_points = []
+
+        for j in FACEMESH_LIPS:
+            all_points.append(landmarks[i][j[0]])
+            all_points.append(landmarks[i][j[1]])
+
+        mx = smoothed_mxx[i]
+        my = smoothed_myy[i]
+
+        left_corner_index = 207
+        right_corner_index = 427
+
+        lip_corner_left = landmarks[i][left_corner_index]  # You need to define left_corner_index
+        lip_corner_right = landmarks[i][right_corner_index]  # You need to define right_corner_index
+        actual_distance = np.sqrt((lip_corner_right.x - lip_corner_left.x)**2 + (lip_corner_right.y - lip_corner_left.y)**2)
+        actual_distance *= frame.shape[1]  # Adjust for frame size
+
+        # angle = calculate_angle(lip_corner_left, lip_corner_right)
+        # center_of_rotation = ((lip_corner_left[0] + lip_corner_right[0]) / 2 * frame.shape[1], (lip_corner_left[1] + lip_corner_right[1]) / 2 * frame.shape[0])
+        # rotated_frame = rotate_image(frame, -angle, center=center_of_rotation)
+
+        scale_factor = actual_distance / reference_distance
+
+        x = int(mx * frame.shape[1])
+        y = int(my * frame.shape[0])
+        w = int(hparams.w//2*scale_factor)
+        h = int(hparams.h//2*scale_factor)
+
+        cropped_frame = cv2.resize(frame[y-h:y+h, x-w:x+w], (hparams.w,hparams.h))
         cropped_frames.append(cropped_frame)
 
     # cropped_frames + spectograms is the next training example
     cropped_frames = np.array(cropped_frames)
+
     assert cropped_frames.shape[0] == S.shape[0]
     return cropped_frames, S
 
@@ -182,10 +196,7 @@ class PreprocessWorker(Thread):
         self.corpus_path = corpus_path
         self.hparams = hparams
         self.counter = counter
-
-        self.detector = YOLO('./models/face_yolov8m.pt')
-        # self.detector = face_detection.build_detector(
-        #   "RetinaNetMobileNetV1", confidence_threshold=.5, nms_iou_threshold=.3)
+        self.landmarker = FaceLandmarker.create_from_options(options)
 
     def run(self):
         last_clip_date = None
@@ -230,7 +241,7 @@ class PreprocessWorker(Thread):
 
                     total_frames = int(clip_duration * self.hparams.fps)
                     if total_frames < self.hparams.temporal_dim:
-                        logging.info('Clip is too short, skipping')
+                        #logging.info('Clip is too short, skipping')
                         continue
 
                     # Calculate clip times by segmenting the clip into parts of temporal_dim frames length
@@ -254,14 +265,14 @@ class PreprocessWorker(Thread):
                         for clip_start in tparts:
                             #print('Extracting clip parts at', base_idx, 'remaining', remaining_frames, 'total', total_frames)
                             try:
-                                cropped_frames, spectrograms = convert_clip_part_to_training_example(self.hparams, self.detector, clip, clip_start)
+                                cropped_frames, spectrograms = convert_clip_part_to_training_example(self.hparams, self.landmarker, clip, clip_start)
                                 if len(cropped_frames) != 0 and len(spectrograms) != 0:
                                     X.append(cropped_frames)
                                     Y.append(spectrograms)
                             except Exception as e:
-                                print('Error in convert_clip_part_to_training_example', e)
+                                #print('Error in convert_clip_part_to_training_example', e)
                                 logging.error(e)
-                                #raise e
+                                raise e
 
                     while len(X) >= self.hparams.dataset_batch_size:
                         data_path = os.path.join(self.hparams.data_dir, f"batch_{self.num}_{current_batch}.npz")
@@ -284,7 +295,7 @@ class PreprocessWorker(Thread):
 
                 except Exception as e:
                     print('Error in timing loop', e)
-                    #raise e
+                    raise e
 
 def main():
     logging.basicConfig(level=logging.INFO,
@@ -337,8 +348,8 @@ def main():
                 worker.join()
 
         time.sleep(5)
-        #progress = counter.counter / len(timings) * 100
-        #print('Progress:', progress, '%')
+        progress = counter.counter / len(timings) * 100
+        print('Progress:', progress, '%')
 
 if __name__ == '__main__':
     main()
