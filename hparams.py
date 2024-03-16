@@ -28,7 +28,9 @@ class HParams(NamedTuple):
 
     teacher_forcing_ratio: float = 0.5
 
-    prenet_dim: int = 128
+    prenet_dim: int = 256
+    prenet_dropout: float = 0.5
+
     postnet_dim: int = 512
     postnet_kernel_size: int = 5
     postnet_n_convs: int = 5

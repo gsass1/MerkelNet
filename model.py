@@ -34,12 +34,19 @@ class Prenet(nn.Module):
     def __init__(self, hparams: HParams):
         super(Prenet, self).__init__()
         self.hparams = hparams
-        self.fc = nn.Linear(hparams.n_mels, hparams.prenet_dim)
+        self.layers = nn.Sequential(
+            nn.Linear(hparams.n_mels, hparams.prenet_dim),
+            nn.ReLU(),
+            nn.Dropout(hparams.postnet_dropout),
+
+            nn.Linear(hparams.prenet_dim, hparams.prenet_dim),
+            nn.ReLU(),
+            nn.Dropout(hparams.postnet_dropout),
+        )
 
     # x - previous mel spectrogram: (batch, n_mels)
     def forward(self, x):
-        x = F.dropout(F.relu(self.fc(x)), self.hparams.dropout, self.training) # (batch, prenet_dim)
-        return x
+        return self.layers(x)
 
 def conv1d(in_channels, out_channels, kernel_size, stride):
     return nn.Sequential(
@@ -91,16 +98,16 @@ class Attention(nn.Module):
         self.hparams = hparams
 
         # Memory FC
-        self.M = nn.Linear(hparams.encoder_hidden_size, hparams.attn_dim, bias=False)
+        self.M = LinearNorm(hparams.encoder_hidden_size, hparams.attn_dim, bias=False, w_init_gain='tanh')
 
         # Query FC
-        self.Q = nn.Linear(hparams.attn_hidden_size, hparams.attn_dim, bias=False)
+        self.Q = LinearNorm(hparams.attn_hidden_size, hparams.attn_dim, bias=False, w_init_gain='tanh')
 
         # Weight FC
         self.W = nn.Linear(hparams.attn_dim, 1, bias=False)
 
         # Location FC
-        self.L = nn.Linear(hparams.attn_n_filters, hparams.attn_dim, bias=False)
+        self.L = LinearNorm(hparams.attn_n_filters, hparams.attn_dim, bias=False, w_init_gain='tanh')
         self.location_conv = nn.Conv1d(2, hparams.attn_n_filters, hparams.attn_kernel_size, padding=int((hparams.attn_kernel_size-1)/2), bias=False, stride=1)
 
     # query - previous decoder output: (batch, n_mels)
