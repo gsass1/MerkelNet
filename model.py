@@ -71,6 +71,18 @@ class Postnet(nn.Module):
         x = F.dropout(self.convs[-1](x), self.hparams.postnet_dropout, self.training)
         return rearrange(x, 'b c t -> b t c')
 
+class LinearNorm(torch.nn.Module):
+    def __init__(self, in_dim, out_dim, bias=True, w_init_gain='linear'):
+        super(LinearNorm, self).__init__()
+        self.linear_layer = torch.nn.Linear(in_dim, out_dim, bias=bias)
+
+        torch.nn.init.xavier_uniform_(
+            self.linear_layer.weight,
+            gain=torch.nn.init.calculate_gain(w_init_gain))
+
+    def forward(self, x):
+        return self.linear_layer(x)
+
 class Attention(nn.Module):
     hparams: HParams
 
@@ -102,15 +114,13 @@ class Attention(nn.Module):
         """
 
         # Location-aware attention
-        prev_attn = self.location_conv(prev_attn)
-        prev_attn = rearrange(prev_attn, 'b c t -> b t c')
-        prev_attn = self.L(prev_attn) # (batch, time, attn_dim)
+        processed_attention = self.location_conv(prev_attn)
+        processed_attention = rearrange(processed_attention, 'b c t -> b t c')
+        processed_attention = self.L(processed_attention) # (batch, time, attn_dim)
 
         q = self.Q(query.unsqueeze(1)) # (batch, 1, attn_dim)
 
-        #memory = self.M(encoder_output) # (batch, time, attn_dime)
-
-        energies = self.W(torch.tanh(q + processed_encoder_output + prev_attn))
+        energies = self.W(torch.tanh(q + processed_encoder_output + processed_attention))
         energies = energies.squeeze(-1) # (batch, time)
 
         attn_weights = F.softmax(energies, dim=1)
@@ -177,20 +187,28 @@ class Decoder(nn.Module):
         device = encoder_output.device
 
         # Hidden state of the attention RNN
+        # (batch, attn_hidden_size)
         self.attn_hidden = torch.zeros(encoder_output.size(0), self.hparams.attn_hidden_size).to(device)
+        # (batch, attn_hidden_size)
         self.attn_cell = torch.zeros(encoder_output.size(0), self.hparams.attn_hidden_size).to(device)
 
         # Hidden states of the decoder RNN
+        # (batch, decoder_hidden_size)
         self.decoder_hidden = torch.zeros(encoder_output.size(0), self.hparams.decoder_hidden_size).to(device)
+        # (batch, decoder_hidden_size)
         self.decoder_cell = torch.zeros(encoder_output.size(0), self.hparams.decoder_hidden_size).to(device)
 
         # Attention states
+        # (batch, time)
         self.attn_weights = torch.zeros(encoder_output.size(0), encoder_output.size(1)).to(device)
+        # (batch, time)
         self.attn_weights_sum = torch.zeros(encoder_output.size(0), encoder_output.size(1)).to(device)
+        # (batch, encoder_hidden_size)
         self.attn_context = torch.zeros(encoder_output.size(0), self.hparams.encoder_hidden_size).to(device)
 
         # Calculate memory only once
-        self.processed_encoder_output = self.attn.M(encoder_output) # (batch, 1, attn_dim)
+        self.encoder_output = encoder_output
+        self.processed_encoder_output = self.attn.M(encoder_output) # (batch, time, attn_dim)
 
 
     def forward(self, encoder_output, targets):
@@ -210,39 +228,43 @@ class Decoder(nn.Module):
         mel_outputs, alignments = [], []
         while len(mel_outputs) < decoder_inputs.size(1)-1:
             decoder_input = decoder_inputs[:, len(mel_outputs)]
-            mel_output = self.decode(encoder_output, decoder_input)
+            mel_output, alignment = self.decode(decoder_input)
             mel_outputs += [mel_output]
-            alignments += [self.attn_weights.detach()]
+            alignments += [alignment]
         mel_outputs = torch.stack(mel_outputs, dim=1) # (batch, time, n_mels)
         alignments = torch.stack(alignments, dim=1) # (batch, decoder_time, encoder_time)
         return mel_outputs, alignments
 
-    def decode(self, encoder_output, prenet_output):
+    def decode(self, prenet_output):
         """
         encoder_outputs: (batch, time, encoder_hidden_size)
-        decoder_input: previous processed mel spectogram (batch, prenet_dim)
+        prenet_output: previous processed mel spectogram (batch, prenet_dim)
         """
 
         # Attention LSTM forward pass by concatenating the previous decoder input and the prenet output
-        cell_input = torch.cat((prenet_output, self.attn_context), dim=1)
+        # (batch, prenet_dim + encoder_hidden_size)
+        cell_input = torch.cat((prenet_output, self.attn_context), -1)
         self.attn_hidden, self.attn_cell = self.attn_lstm(cell_input, (self.attn_hidden, self.attn_cell))
         self.attn_hidden = F.dropout(self.attn_hidden, self.hparams.dropout, self.training)
 
         # Perform location-aware attention
+        # (batch, 2, time)
         attn_weights_cat = torch.cat((self.attn_weights.unsqueeze(1), self.attn_weights_sum.unsqueeze(1)), dim=1)
-        self.attn_context, self.attn_weights = self.attn(self.attn_hidden, encoder_output, self.processed_encoder_output, attn_weights_cat)
+        self.attn_context, self.attn_weights = self.attn(self.attn_hidden, self.encoder_output, self.processed_encoder_output, attn_weights_cat)
         self.attn_weights_sum += self.attn_weights
 
         # Decoder LSTM forward pass by concatenating the attention context and the attention hidden state
-        cell_input = torch.cat((self.attn_context, self.attn_hidden), dim=1)
-        self.decoder_hidden, self.decoder_cell = self.lstm(cell_input, (self.decoder_hidden, self.decoder_cell))
+        # (batch, attn_hidden_size + encoder_hidden_size)
+        decoder_cell_input = torch.cat((self.attn_hidden, self.attn_context), -1)
+        self.decoder_hidden, self.decoder_cell = self.lstm(decoder_cell_input, (self.decoder_hidden, self.decoder_cell))
         self.decoder_hidden = F.dropout(self.decoder_hidden, self.hparams.dropout, self.training)
 
         # Project the decoder hidden state to the mel spectogram
+        # (batch, decoder_hidden_size + encoder_hidden_size)
         proj_input = torch.cat((self.decoder_hidden, self.attn_context), dim=1)
         output = self.proj(proj_input)
 
-        return output
+        return output, self.attn_weights
 
     def inference(self, encoder_output):
         self.setup_states(encoder_output)
@@ -251,10 +273,10 @@ class Decoder(nn.Module):
         mel_outputs, alignments = [], []
         while len(mel_outputs) < encoder_output.size(1):
             decoder_input = self.prenet(decoder_input).squeeze(1)
-            mel_output = self.decode(encoder_output, decoder_input)
+            mel_output, alignment = self.decode(decoder_input)
 
             mel_outputs += [mel_output]
-            alignments += [self.attn_weights.detach()]
+            alignments += [alignment]
 
             decoder_input = mel_output
 
