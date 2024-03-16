@@ -4,6 +4,7 @@ from torch.utils.data import Dataset
 import numpy as np
 from tqdm import tqdm
 import librosa
+import random
 
 from hparams import HParams
 
@@ -19,9 +20,6 @@ class MerkelDataset(Dataset):
                 self.filepaths.append(os.path.join(self.hparams.data_dir, f))
 
     def __len__(self):
-        return self.raw_len() * (AUGMENTATION_METHODS+1)
-
-    def raw_len(self):
         return int(len(self.filepaths) * self.hparams.dataset_ratio) * self.hparams.dataset_batch_size
 
     def get_batch(self, file_idx):
@@ -38,17 +36,14 @@ class MerkelDataset(Dataset):
         return (X, Y)
 
     def __getitem__(self, idx):
-        norm_idx = idx // (AUGMENTATION_METHODS+1)
-        augm_idx = idx % (AUGMENTATION_METHODS+1)
-
-        file_idx = norm_idx // self.hparams.dataset_batch_size 
-        data_idx = norm_idx % self.hparams.dataset_batch_size 
+        file_idx = idx // self.hparams.dataset_batch_size 
+        data_idx = idx % self.hparams.dataset_batch_size 
 
         (X, Y) = self.get_batch(file_idx)
         x = X[data_idx]
         y = Y[data_idx]
 
-        x = self.perform_image_augmentation(x, augm_idx)
+        x = self.perform_image_augmentation(x, random.randrange(AUGMENTATION_METHODS+1))
 
         return x, y
 
@@ -74,7 +69,7 @@ class MerkelDataset(Dataset):
         return x
 
     def preload(self):
-        len_batches = self.raw_len()//self.hparams.dataset_batch_size
+        len_batches = len(self)//self.hparams.dataset_batch_size
         with tqdm(total=len_batches, unit="batch") as pbar:
             pbar.set_description("Preloading dataset into memory")
             for i in range(len_batches):
