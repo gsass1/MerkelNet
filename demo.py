@@ -239,6 +239,7 @@ if __name__ == "__main__":
                     description='Calculate evaluation metrics on a random validation dataset')
     parser.add_argument("--checkpoint", required=True, type=str)
     parser.add_argument("--share", action='store_true')
+    parser.add_argument("--bind", default='localhost', type=str)
     args, hparams = do_arg_parse_with_hparams(parser)
 
     if not os.path.exists(args.checkpoint):
@@ -265,4 +266,4 @@ if __name__ == "__main__":
         btn.click(process_video, inputs=in_video, outputs=[out_video, original_mel, pred_mel])
         gr.Examples([os.path.join(os.path.dirname(__file__), "examples/cut.mp4"), os.path.join(os.path.dirname(__file__), "examples/short.mp4")], in_video, [out_video, original_mel, pred_mel], process_video, cache_examples=False)
 
-    demo.launch(share=args.share, server_name="0.0.0.0")
+    demo.launch(share=args.share, server_name=args.bind)

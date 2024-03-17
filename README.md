@@ -3,6 +3,8 @@
 Repository for my DL4CV project at THM.
 Project only tested with Python 3.10.12
 
+You can use [this link](https://cloud.gian-sass.com/s/LMzmSseQzSFKirN) to download my pretrained checkpoint.
+
 ## Installation
 
 Create new environment and install dependencies: 
