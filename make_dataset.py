@@ -272,7 +272,7 @@ class PreprocessWorker(Thread):
                             except Exception as e:
                                 #print('Error in convert_clip_part_to_training_example', e)
                                 logging.error(e)
-                                raise e
+                                #raise e
 
                     while len(X) >= self.hparams.dataset_batch_size:
                         data_path = os.path.join(self.hparams.data_dir, f"batch_{self.num}_{current_batch}.npz")
@@ -295,7 +295,7 @@ class PreprocessWorker(Thread):
 
                 except Exception as e:
                     print('Error in timing loop', e)
-                    raise e
+                    #raise e
 
 def main():
     logging.basicConfig(level=logging.INFO,
@@ -349,7 +349,7 @@ def main():
 
         time.sleep(5)
         progress = counter.counter / len(timings) * 100
-        print('Progress:', progress, '%')
+        #print('Progress:', progress, '%')
 
 if __name__ == '__main__':
     main()
