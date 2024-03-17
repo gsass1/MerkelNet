@@ -5,29 +5,6 @@ import numpy as np
 from einops import rearrange, reduce
 from hparams import HParams
 
-class ConvNorm(nn.Module):
-    def __init__(self, in_channels, out_channels, kernel_size, stride, padding, dropout, skip_connection=False):
-        super(ConvNorm, self).__init__()
-        self.skip_connection = skip_connection 
-        self.conv = nn.Conv3d(in_channels, out_channels, kernel_size=kernel_size, stride=stride, padding=padding)
-        self.batch_norm = nn.BatchNorm3d(out_channels)
-        self.dropout = dropout
-  
-    def forward(self, x):
-        identity = x
-
-        out = self.conv(x)
-        out = self.batch_norm(out)
-
-        if self.skip_connection:
-            out += identity
-
-        out = F.relu(out)
-
-        out = F.dropout(out, self.dropout, self.training)
-
-        return out
-
 class Prenet(nn.Module):
     hparams: HParams
 
@@ -317,7 +294,6 @@ class MerkelNet(nn.Module):
     def inference(self, frames):
         """
         frames: (B, C, T, H ,W)
-        targets: (B, T, n_mels)
         """
         encoder_output = self.encoder(frames) # (batch, time, encoder_hidden_size)
         decoder_output, alignments = self.decoder.inference(encoder_output) # (batch, time, n_mels)

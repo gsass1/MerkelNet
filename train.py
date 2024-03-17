@@ -23,19 +23,8 @@ from dataset import MerkelDataset
 import wandb
 import wandb.plots
 
-def melspectrogram_to_audio(hparams: HParams, S, n_iter=64):
-    S = S.detach().numpy().transpose(1, 0)
-
-    # Convert to STFT
-    linear_segment = librosa.feature.inverse.mel_to_stft(S, sr=hparams.sr, n_fft=hparams.n_fft)
-
-    # Griffin-Lim reconstruction
-    audio = librosa.griffinlim(linear_segment, n_iter=n_iter, hop_length=hparams.hop_length)
-
-    return audio
-
-
 def plot_alignment_heatmap(hparams, alignments):
+    # aligments is (batch, decoder_timesteps, encoder_timesteps)
     heat = np.mean(alignments, axis=0)
     rng = np.arange(0, hparams.temporal_dim, 10)
 
@@ -102,9 +91,6 @@ def main():
 
     criterion = nn.MSELoss()
     optimizer = optim.Adam(model.parameters(), lr=hparams.learning_rate)
-
-    # Add model architecture to Tensorboard
-    #writer.add_graph(model, next(iter(train_loader))[0].to(device))
 
     # start a new wandb run to track this script
     if use_wandb:
@@ -182,23 +168,6 @@ def main():
             filename = os.path.join(hparams.checkpoint_dir, f"model_{epoch}.pth")
             logging.info(f'Saving model to {filename}')
             torch.save(model.state_dict(), filename)
-
-    # def on_exit(): 
-    #     wandb.finish()
-
-    # atexit.register(on_exit)
-
-# X = X.to(device)
-# Y = Y.to(device)
-
-# for epoch in range(1000):
-#     optimizer.zero_grad()
-#     output = model(X)
-#     loss = criterion(output, Y)
-#     loss.backward()
-#     optimizer.step()
-
-#     print(f'Epoch {epoch}, loss {loss.item()}')
 
 if __name__ == "__main__":
     main()
