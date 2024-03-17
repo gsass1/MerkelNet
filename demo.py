@@ -1,5 +1,6 @@
 import argparse
 import logging
+import tempfile
 import gradio as gr
 import librosa
 from moviepy.editor import *
@@ -9,6 +10,8 @@ import numpy as np
 import cv2
 import torch
 import soundfile as sf
+import matplotlib.pyplot as plt
+import noisereduce
 
 import mediapipe as mp
 from mediapipe.tasks import python
@@ -31,6 +34,34 @@ VisionRunningMode = mp.tasks.vision.RunningMode
 options = FaceLandmarkerOptions(
     base_options=BaseOptions(model_asset_path=model_path),
     running_mode=VisionRunningMode.IMAGE)
+
+def plot_mel(audio_path, hparams, title, out_path, reduce=False, length=None):
+    y, _ = librosa.load(audio_path, sr=hparams.sr)
+
+    if reduce:
+        y = noisereduce.reduce_noise(y, sr=hparams.sr)
+    S = librosa.feature.melspectrogram(
+            y=y,
+            sr=hparams.sr,
+            n_mels=hparams.n_mels,
+            fmax=hparams.f_max,
+            n_fft=hparams.n_fft,
+            hop_length=hparams.hop_length)
+
+    if length:
+        S = S[:, :length]
+
+    S_dB = librosa.power_to_db(S, ref=np.max)
+
+    # Plot Mel Spectrogram
+    plt.figure(figsize=(10, 4))
+    librosa.display.specshow(S_dB, x_axis='time', y_axis='mel', sr=16000, fmax=8000)
+    #plt.specgram(S.T)
+    plt.colorbar(format='%+2.0f dB')
+    plt.title(title)
+    plt.tight_layout()
+    plt.savefig(out_path)
+    return out_path
 
 def convert_clip_part_to_training_example(hparams: HParams, landmarker, clip: VideoFileClip, start_frame):
     frames = []
@@ -186,7 +217,15 @@ def process_video(in_video, progress=gr.Progress()):
     video = clip.copy()
     video.audio = AudioFileClip(f'/tmp/tmp_out.wav')
     video.write_videofile("/tmp/tmp_out.mp4", fps=25)
-    return "/tmp/tmp_out.mp4"
+
+    # Create a temporary audio file
+    with tempfile.NamedTemporaryFile(suffix='.wav') as temp_audio_file:
+        clip.audio.write_audiofile(temp_audio_file.name, codec='pcm_s16le', verbose=False, write_logfile=False, logger=None)
+        original_mel = plot_mel(temp_audio_file.name, hparams, "Original Mel Spectrogram", "/tmp/original_mel.png", reduce=True, length=S.shape[0])
+
+    predicted_mel = plot_mel("/tmp/tmp_out.wav", hparams, "Predicted Mel Spectrogram", "/tmp/predicted_mel.png")
+
+    return "/tmp/tmp_out.mp4", original_mel, predicted_mel
 
 if __name__ == "__main__":
     logging.basicConfig(level=logging.INFO,
@@ -216,8 +255,14 @@ if __name__ == "__main__":
         with gr.Row():
             in_video = gr.Video(label="Input Video")
             out_video = gr.Video(label="Output Video")
-        gr.Examples([os.path.join(os.path.dirname(__file__), "examples/cut.mp4"), os.path.join(os.path.dirname(__file__), "examples/short.mp4")], in_video, out_video, process_video, cache_examples=False)
+
+
         btn = gr.Button("Process")
-        btn.click(process_video, inputs=in_video, outputs=out_video)
+
+        original_mel = gr.Image(label="Original Mel Spectrogram")
+        pred_mel = gr.Image(label="Predicted Mel Spectrogram")
+
+        btn.click(process_video, inputs=in_video, outputs=[out_video, original_mel, pred_mel])
+        gr.Examples([os.path.join(os.path.dirname(__file__), "examples/cut.mp4"), os.path.join(os.path.dirname(__file__), "examples/short.mp4")], in_video, [out_video, original_mel, pred_mel], process_video, cache_examples=False)
 
     demo.launch(share=args.share, server_name="0.0.0.0")
